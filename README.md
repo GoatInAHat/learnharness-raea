@@ -1,3 +1,47 @@
-# Raea Explainer
+# Raea Explainer for LearnHarness
 
-Preparing the reviewed plugin release.
+Create short, silent, captioned explainer videos directly in a LearnHarness lesson. The teacher uses your existing configured model; Raea renders the visual locally. Videos appear in the conversation with playback controls and a text transcript.
+
+## See it in action
+
+![A frame from a binary-search explainer](examples/binary-search.png)
+
+[Watch the 15-second example](examples/binary-search.mp4). The teacher generated this plan using an existing Claude connection in the official LearnHarness 0.6.0 app; the enabled plugin rendered it locally with the Light theme. The video is silent and captioned.
+
+## Install the prebuilt plugin
+
+Requires **LearnHarness 0.6.0 or later**. Download the [prebuilt plugin ZIP](https://github.com/GoatInAHat/learnharness-raea/releases/download/v0.1.0/raea-explainer.zip) from the [v0.1.0 release](https://github.com/GoatInAHat/learnharness-raea/releases/tag/v0.1.0). In LearnHarness open **Settings → Community plugins** and copy the plugins directory. Extract the archive there, so that this file exists:
+
+```text
+<plugins directory>/raea-explainer/dist/manifest.json
+```
+
+Refresh the plugin list and enable **Raea Explainer**. No Node.js or npm is needed to install the prebuilt package. Ask your teacher, for example: **“Explain binary search with a short video, then ask me a quick question.”**
+
+The first video card asks permission to download the official Raea runtime. On macOS Apple Silicon this is 303 MiB and uses about 1.1 GiB installed; Linux x64 downloads 961 MiB and Windows x64 downloads 251 MiB, both requiring additional disk space. The fixed release archive is checked against its pinned SHA-256 digest before extraction. Later renders reuse it. Downloads occur only after your confirmation.
+
+Linux requires a compatible glibc (2.39 or newer), Vulkan graphics, ALSA and fontconfig. Windows requires an x64 Visual C++ runtime and compatible DirectX 12 or Vulkan graphics. The pinned Raea runtime has been exercised on Apple Silicon macOS, Ubuntu 24.04, and Windows Server 2025 with software Vulkan. Full plugin and desktop-app acceptance has been performed on macOS Apple Silicon; CI checks the standalone plugin build, tests, package and installer on Linux and Windows. Graphics drivers and other host requirements can vary. Unsupported architectures cannot render.
+
+## Settings and saved videos
+
+Open **Settings → Community plugins → Raea Explainer** or use **Video settings** on a video card. **Allow new explainer videos** defaults on; turning it off blocks new plans and renders while existing videos remain playable. Choose a maximum length of 10, 15 or 25 seconds (default 25) for new plans, and a dark or light theme for future renders. Videos have captions and a transcript but no narration or music.
+
+Disabling the entire community plugin hides its video renderer until it is enabled again. This does not delete the plugin’s saved plans, videos or runtime. To update, replace only `raea-explainer/dist/`, preserve sibling `data/`, and restart LearnHarness. Raea runs as a separate executable, not as model-generated code; the teacher supplies bounded declarative scene data.
+
+## Develop
+
+Node.js 22 or newer is required to build from source:
+
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run install:local -- "<plugins directory>"
+```
+
+The portable installer only replaces `dist/`, preserves `data/`, and never enables plugins or starts the host. Refresh and enable a new install; restart after changing loaded code. The bundled SDK contains generated public, type-only LearnHarness declarations. Runtime JavaScript does not import host-private modules.
+
+## License and attribution
+
+The plugin source is AGPL-3.0-only; see [LICENSE](LICENSE). The bundled TypeBox dependency is MIT licensed; see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). LearnHarness is an independent project by Amos Blomqvist. Raea is a separate project by shinyobjectz, downloaded from its official release and subject to its own [FSL-1.1-ALv2 license](https://github.com/shinyobjectz/raea/blob/v0.1.1-rc2/LICENSE). This project is not affiliated with either upstream.

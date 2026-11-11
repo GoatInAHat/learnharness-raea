@@ -1,0 +1,1 @@
+{"apiVersion":1,"id":"raea-explainer","name":"Raea Explainer","version":"0.1.0","minAppVersion":"0.6.0","description":"Create captioned explainer videos in lessons using Raea.","main":"main.js","backend":"backend.cjs"}
