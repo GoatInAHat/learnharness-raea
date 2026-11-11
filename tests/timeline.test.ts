@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import { validTimeline } from "../src/timeline.ts";
 import { rendererEnvironment } from "../src/pocket.ts";
 import { timelineComposition } from "../src/timeline-render.ts";
@@ -64,8 +65,8 @@ test("semantic plans reject unsafe data and invalid interval indices", () => {
 test("renderer uses a single clean offline environment without inherited credentials", () => {
   const env = rendererEnvironment("/private/plugin", "/private/job");
   assert.equal(env.RAEA_OFFLINE, "1");
-  assert.equal(env.RAEA_FEED_MODELS, "/private/plugin/models");
-  assert.equal(env.RAEA_SPEECH_CACHE, "/private/job/speech-cache");
+  assert.equal(env.RAEA_FEED_MODELS, path.join("/private/plugin", "models"));
+  assert.equal(env.RAEA_SPEECH_CACHE, path.join("/private/job", "speech-cache"));
   for (const key of [
     "HOME",
     "HF_TOKEN",

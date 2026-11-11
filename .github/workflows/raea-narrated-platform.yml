@@ -26,15 +26,21 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install the LearnHarness Electron version for media verification
+        run: npm install --prefix .qualification-electron --no-save --package-lock=false electron@44.9.3
       - name: Linux software Vulkan and runtime libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install --no-install-recommends -y libvulkan1 mesa-vulkan-drivers libasound2t64 libfontconfig1 libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libx11-xcb1 xvfb xauth
+          sudo apt-get install --no-install-recommends -y ffmpeg libvulkan1 mesa-vulkan-drivers libasound2t64 libfontconfig1 libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libx11-xcb1 xvfb xauth
       - name: Windows software Vulkan
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          if (!(Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --version=7.1.1 -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'FFmpeg qualification tool setup failed' }
+          }
           $dir = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'raea-mesa')
           $archive = Join-Path $dir.FullName 'mesa.7z'
           curl.exe --fail --location --silent --show-error --max-time 120 --output $archive 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z'
@@ -55,8 +61,9 @@ jobs:
         if: runner.os == 'Windows'
         run: node --import tsx scripts/qualify-narrated.mjs
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: narrated-qualification-${{ matrix.os }}
           path: qualification-results/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
