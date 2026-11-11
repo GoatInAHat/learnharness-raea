@@ -91,7 +91,7 @@ try {
   assert(playback.decodedSeconds >= duration - 0.2);
   assert(Math.abs(playback.seek - 9) < 0.1);
 
-  const frames = [["secant", 2], ["approach", 9], ["tangent", 16]];
+  const frames = [["secant", 2], ["transition", 6.5], ["approach", 9], ["tangent", duration - 0.1]];
   const hashes = new Set();
   for (const [label, second] of frames) {
     const png = path.join(artifacts, `${label}.png`);

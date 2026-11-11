@@ -27,6 +27,13 @@ async function main() {
       if (a > 0.01) activeSamples++;
       if (a >= 1) clippingSamples++;
     }
+    const peakBetween = (from, to) => {
+      let peak = 0;
+      for (let i = Math.floor(from * audio.sampleRate); i < Math.min(samples.length, Math.floor(to * audio.sampleRate)); i++) {
+        peak = Math.max(peak, Math.abs(samples[i]));
+      }
+      return peak;
+    };
     const video = document.querySelector('video');
     const url = URL.createObjectURL(new Blob([bytes], {type:'video/mp4'}));
     const event = name => new Promise((resolve,reject) => {
@@ -46,7 +53,7 @@ async function main() {
       const seeked = event('seeked');
       video.currentTime = 9;
       await seeked;
-      return {decodedSeconds:audio.duration, decodedChannels:audio.numberOfChannels, decodedPeak, activeSamples, clippingSamples, advanced, seek:video.currentTime, width:video.videoWidth, height:video.videoHeight};
+      return {decodedSeconds:audio.duration, decodedChannels:audio.numberOfChannels, decodedPeak, activeSamples, clippingSamples, movingPeak:peakBetween(6.2,6.95), settledPeak:peakBetween(7.3,8.5), advanced, seek:video.currentTime, width:video.videoWidth, height:video.videoHeight};
     } finally {
       video.removeAttribute('src');
       video.load();
@@ -55,6 +62,7 @@ async function main() {
   })()`);
   assert(result.advanced > 0.2, "The Electron player did not advance");
   assert(result.activeSamples > 4800 && result.clippingSamples === 0, "Decoded audio is silent or clipped");
+  assert(result.movingPeak < 0.01 && result.settledPeak > 0.05, "Target narration must start after the moving diagram settles");
   assert.equal(result.width, 960);
   assert.equal(result.height, 540);
   console.log(JSON.stringify({ ...result, electron: process.versions.electron }));

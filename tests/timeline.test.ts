@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { validTimeline } from "../src/timeline.ts";
+import { transformSync } from "esbuild";
+import {
+  validTimeline,
+  narrationWordLimit,
+  narrationWordCount,
+} from "../src/timeline.ts";
 import { rendererEnvironment } from "../src/pocket.ts";
 import { timelineComposition } from "../src/timeline-render.ts";
 
@@ -66,7 +71,10 @@ test("renderer uses a single clean offline environment without inherited credent
   const env = rendererEnvironment("/private/plugin", "/private/job");
   assert.equal(env.RAEA_OFFLINE, "1");
   assert.equal(env.RAEA_FEED_MODELS, path.join("/private/plugin", "models"));
-  assert.equal(env.RAEA_SPEECH_CACHE, path.join("/private/job", "speech-cache"));
+  assert.equal(
+    env.RAEA_SPEECH_CACHE,
+    path.join("/private/job", "speech-cache"),
+  );
   for (const key of [
     "HOME",
     "HF_TOKEN",
@@ -88,6 +96,7 @@ test("narration uses measured duration and preserves hostile text as inert JSON"
     voice: "alba",
     maxSeconds: 60,
   });
+  assert.doesNotThrow(() => transformSync(source, { loader: "tsx" }));
   assert.match(source, /speechDuration/);
   assert.match(source, /seconds<=0/);
   assert.match(source, /frames>maxSeconds\*fps/);
@@ -106,4 +115,15 @@ test("legacy silent plans remain valid after timeline upgrade", async () => {
     })),
   };
   assert.equal(validVideoPlan(legacy), true);
+});
+
+test("word budget reserves scene pauses and scales with selected maximum", () => {
+  assert.equal(narrationWordLimit(15, 5), 10);
+  assert.ok(
+    38 > narrationWordLimit(15, 5),
+    "the observed five-beat 38-word plan is rejected before rendering",
+  );
+  assert.equal(narrationWordLimit(60, 5), 77);
+  assert.ok(validTimeline(plan));
+  assert.equal(narrationWordCount(plan), 10);
 });

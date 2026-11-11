@@ -71,6 +71,19 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
         },
       })),
     };
+    const overlong = {
+      ...plan,
+      scenes: plan.scenes.map((scene) => ({
+        ...scene,
+        narration:
+          "one two three four five six seven eight nine ten eleven twelve",
+      })),
+    };
+    await assert.rejects(
+      () =>
+        tools[0].execute("overlong", overlong, new AbortController().signal),
+      /length budget/,
+    );
     const a = await tools[0].execute(
       "call-one",
       plan,
