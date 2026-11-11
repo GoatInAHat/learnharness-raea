@@ -1,0 +1,158 @@
+{
+  "name": "Pocket TTS English",
+  "engine": "RAEA v0.1.1-rc2",
+  "fileCount": 16,
+  "bytes": 216944154,
+  "MiB": 206.89406776428223,
+  "groups": [
+    {
+      "repo": "KevinAHM/pocket-tts-onnx",
+      "revision": "58a6d00cf13d239b6748cb0769f35c580a8f606c",
+      "license": "cc-by-4.0",
+      "assets": [
+        {
+          "local": "bundle.json",
+          "path": "onnx/english_2026-04/bundle.json",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/bundle.json",
+          "bytes": 24381,
+          "sha256": "bab643150f437f37df080a710520ff39ed9ebd9a339f8ebdc739f7eddfc28b3f",
+          "gitBlob": "6c44c3f66eccff6f2875ed7e1c780bc522001e2d"
+        },
+        {
+          "local": "text_conditioner.onnx",
+          "path": "onnx/english_2026-04/text_conditioner.onnx",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/text_conditioner.onnx",
+          "bytes": 16388344,
+          "sha256": "4ecee995fb69f85c7a7493d11f7b5ee15d9950facc7ab3f5c9c49ef1e03847bb",
+          "gitBlob": "b32a672bfb3d9aba60e5bc0f06497fa55b6fcc79"
+        },
+        {
+          "local": "flow_lm_main_int8.onnx",
+          "path": "onnx/english_2026-04/flow_lm_main_int8.onnx",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/flow_lm_main_int8.onnx",
+          "bytes": 76341079,
+          "sha256": "f9bd8106b79a0192c1c43399ab938fb24900a95c1c599870d75a884e99000116",
+          "gitBlob": "bbcf41dc5040c44fddcf83cd125d98a1fd7e4a67"
+        },
+        {
+          "local": "flow_lm_flow_int8.onnx",
+          "path": "onnx/english_2026-04/flow_lm_flow_int8.onnx",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/flow_lm_flow_int8.onnx",
+          "bytes": 9962530,
+          "sha256": "3dd781ee5abee9e195320bf0106bebd6372a852b3b36352524ee78b40554635d",
+          "gitBlob": "7ca07daee0085a1d0300e1dd444c28e5ed931018"
+        },
+        {
+          "local": "mimi_decoder_int8.onnx",
+          "path": "onnx/english_2026-04/mimi_decoder_int8.onnx",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/mimi_decoder_int8.onnx",
+          "bytes": 22684077,
+          "sha256": "3630450a3297a101792a6ac66619ebc70ab916b265e6220c2afaef8b1673f925",
+          "gitBlob": "2c72e2baa86687adf94346aad5a5bde97ec362e2"
+        },
+        {
+          "local": "mimi_encoder.onnx",
+          "path": "onnx/english_2026-04/mimi_encoder.onnx",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/mimi_encoder.onnx",
+          "bytes": 39768446,
+          "sha256": "853e2ca623b8782d94c3745ec6133bfdff7ce33d9b11128bd29ea03f28d76e3d",
+          "gitBlob": "ecdeef4eff178b2df45305c29737ce65413ff059"
+        },
+        {
+          "local": "bos_before_voice.npy",
+          "path": "onnx/english_2026-04/bos_before_voice.npy",
+          "url": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/english_2026-04/bos_before_voice.npy",
+          "bytes": 4224,
+          "sha256": "f46edf4f7007b7ba4ea58831f49d003e59e167b4641c44bb3addfe9231a780b1",
+          "gitBlob": "b03d986b681d7b28fa082a57e923426422aff032"
+        }
+      ]
+    },
+    {
+      "repo": "mlx-community/pocket-tts",
+      "revision": "cbf71d5f6657bbc3f4bc02f85ee408261225bec7",
+      "license": "cc-by-4.0",
+      "assets": [
+        {
+          "local": "tokenizer.json",
+          "path": "tokenizer.json",
+          "url": "https://huggingface.co/mlx-community/pocket-tts/resolve/cbf71d5f6657bbc3f4bc02f85ee408261225bec7/tokenizer.json",
+          "bytes": 244993,
+          "sha256": "ef29c4871fd62c7beb928150edc095be1327f0924c0eab9e06b95918b39eff5f",
+          "gitBlob": "c928c87c7493fb2380dd72682004a25082f9d70c"
+        }
+      ]
+    },
+    {
+      "repo": "kyutai/pocket-tts-without-voice-cloning",
+      "revision": "a7056f505a4a8ca72d8b5fb1440071d6f1a35739",
+      "license": "cc-by-4.0",
+      "assets": [
+        {
+          "local": "voice-alba.safetensors",
+          "path": "languages/english_2026-04/embeddings/alba.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/alba.safetensors",
+          "bytes": 6244152,
+          "sha256": "1b704240aa9da36ab32ac05c46a8a9172031c82bc07dbab9df834f0063b24985",
+          "gitBlob": "33adeb3c86985da659578165d1163b54519ad324"
+        },
+        {
+          "local": "voice-marius.safetensors",
+          "path": "languages/english_2026-04/embeddings/marius.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/marius.safetensors",
+          "bytes": 6244152,
+          "sha256": "e919b89ed4f621728f925071b9a26f249dc716fe5b795df4c4e99d2fe1a3d8de",
+          "gitBlob": "616fee38ef1fe45b7f50fc108492acb6c6efe793"
+        },
+        {
+          "local": "voice-javert.safetensors",
+          "path": "languages/english_2026-04/embeddings/javert.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/javert.safetensors",
+          "bytes": 6145848,
+          "sha256": "729e20a1c9b878805c092732c8a1717abbd5bb1963fee2e193ab47812d728bea",
+          "gitBlob": "75d1cbd932930e8e77a8ed50f4478a56332971bb"
+        },
+        {
+          "local": "voice-jean.safetensors",
+          "path": "languages/english_2026-04/embeddings/jean.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/jean.safetensors",
+          "bytes": 6096696,
+          "sha256": "78c958982cc25035b8345435b497c4ee936dcff6a0a1e1af22c33cffe85c6b50",
+          "gitBlob": "153fa255eb7e8439e194afca74c6bba2004fa1de"
+        },
+        {
+          "local": "voice-fantine.safetensors",
+          "path": "languages/english_2026-04/embeddings/fantine.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/fantine.safetensors",
+          "bytes": 6440760,
+          "sha256": "8fcf73ceef62f2bc37a1d5e35b9262f4151984bbd400ff1384a68244e6375a4e",
+          "gitBlob": "8754565b6277de36f96f75868a609dd72e42c010"
+        },
+        {
+          "local": "voice-cosette.safetensors",
+          "path": "languages/english_2026-04/embeddings/cosette.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/cosette.safetensors",
+          "bytes": 6244152,
+          "sha256": "bfb41910c32bb4e8a3d9e4d9583515f97ff427b7b955fc4ae46e6157910c6d72",
+          "gitBlob": "e5fbfd8c4ed8b3528de70ecf95859c9122763ea9"
+        },
+        {
+          "local": "voice-eponine.safetensors",
+          "path": "languages/english_2026-04/embeddings/eponine.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/eponine.safetensors",
+          "bytes": 6932280,
+          "sha256": "a132818b4e12e26338b54f388422d13d33d35c37848e92d0d53930707d57a8bd",
+          "gitBlob": "bd0c99bb022875d8085da40c7d6e30ade1923f06"
+        },
+        {
+          "local": "voice-azelma.safetensors",
+          "path": "languages/english_2026-04/embeddings/azelma.safetensors",
+          "url": "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/a7056f505a4a8ca72d8b5fb1440071d6f1a35739/languages/english_2026-04/embeddings/azelma.safetensors",
+          "bytes": 7178040,
+          "sha256": "fc41bb9f6f2c692b17d30cf819f7c3a83dd1d70b1effc6728f77527d69941802",
+          "gitBlob": "1ffd1c485a3a35e77c7776f442027abffa4b782d"
+        }
+      ]
+    }
+  ]
+}

@@ -4,21 +4,39 @@ import { randomUUID, createHash } from "node:crypto";
 import type { PluginBackendContext } from "../sdk/index.ts";
 import { videoSchema, validVideoPlan, type VideoPlan } from "./video.ts";
 import { createRuntime } from "./runtime.ts";
+import {
+  timelineSchema,
+  validTimeline,
+  narrationWordLimit,
+  narrationWordCount,
+  type TimelinePlan,
+} from "./timeline.ts";
+import { POCKET_MIB } from "./pocket.ts";
 
 type Settings = {
   enabled: boolean;
-  maxSeconds: 10 | 15 | 25;
+  maxSeconds: 10 | 15 | 25 | 45 | 60 | 90;
+  narration: boolean;
+  voice: "alba" | "marius";
   theme: "dark" | "light";
 };
 type RecordData = {
   version: 1;
   id: string;
   chatId: string;
-  plan: VideoPlan;
+  plan: VideoPlan | TimelinePlan;
+  maxSeconds?: number;
+  activity?: string;
   status: "pending" | "running" | "done" | "error";
   error?: string;
 };
-const defaults: Settings = { enabled: true, maxSeconds: 25, theme: "dark" };
+const defaults: Settings = {
+  enabled: true,
+  maxSeconds: 60,
+  theme: "dark",
+  narration: true,
+  voice: "alba",
+};
 const idPattern = /^[a-f0-9-]{36}$/;
 const chunkSize = 512 * 1024;
 export function activate(ctx: PluginBackendContext) {
@@ -56,12 +74,16 @@ export function activate(ctx: PluginBackendContext) {
     if (
       !x ||
       typeof x !== "object" ||
-      (x.version !== undefined && x.version !== 1)
+      (x.version !== undefined && x.version !== 1 && x.version !== 2)
     )
       throw new Error("Unsupported video settings format");
     return {
       enabled: typeof x.enabled === "boolean" ? x.enabled : true,
-      maxSeconds: [10, 15, 25].includes(x.maxSeconds) ? x.maxSeconds : 25,
+      maxSeconds: [10, 15, 25, 45, 60, 90].includes(x.maxSeconds)
+        ? x.maxSeconds
+        : 60,
+      narration: typeof x.narration === "boolean" ? x.narration : true,
+      voice: x.voice === "marius" ? "marius" : "alba",
       theme: x.theme === "light" ? "light" : "dark",
     };
   };
@@ -93,7 +115,11 @@ export function activate(ctx: PluginBackendContext) {
   };
   const read = (id: unknown): RecordData => {
     const item = JSON.parse(fs.readFileSync(file(id, ".json"), "utf8"));
-    if (item.version !== 1 || item.id !== id || !validVideoPlan(item.plan))
+    if (
+      item.version !== 1 ||
+      item.id !== id ||
+      !(validVideoPlan(item.plan) || validTimeline(item.plan))
+    )
       throw new Error("Invalid video record");
     return item;
   };
@@ -104,7 +130,10 @@ export function activate(ctx: PluginBackendContext) {
   const assertActive = () => {
     if (ctx.signal.aborted) throw new Error("Plugin disabled");
   };
-  const start = (id: unknown, download: boolean) => {
+  const start = (
+    id: unknown,
+    consent: { runtime: boolean; speech: boolean },
+  ) => {
     assertActive();
     const item = read(id);
     const pref = settings();
@@ -112,8 +141,15 @@ export function activate(ctx: PluginBackendContext) {
       throw new Error("New explainer videos are disabled in plugin settings.");
     if (!runtime.asset)
       throw new Error("Video rendering is unavailable on this platform.");
-    if (!runtime.runtimeInstalled() && !download)
+    if (!runtime.runtimeInstalled() && !consent.runtime)
       throw new Error("Runtime download needs your approval.");
+    if (
+      validTimeline(item.plan) &&
+      pref.narration &&
+      !runtime.pocketInstalled() &&
+      !consent.speech
+    )
+      throw new Error("Narration model download needs your approval.");
     if (running)
       throw new Error(
         "Another video is rendering; try again when it finishes.",
@@ -132,8 +168,18 @@ export function activate(ctx: PluginBackendContext) {
           item.plan,
           file(item.id, ".mp4"),
           pref.theme,
-          download,
+          consent,
           controller.signal,
+          {
+            narration: pref.narration,
+            voice: pref.voice,
+            maxSeconds: item.maxSeconds ?? pref.maxSeconds,
+            progress: (activity) => {
+              if (controller.signal.aborted || ctx.signal.aborted) return;
+              item.activity = activity;
+              save(item);
+            },
+          },
         );
         controller.signal.throwIfAborted();
         assertActive();
@@ -176,12 +222,19 @@ export function activate(ctx: PluginBackendContext) {
     const pref = settings();
     if (x.key === "enabled" && typeof x.value === "boolean")
       pref.enabled = x.value;
-    else if (x.key === "maxSeconds" && [10, 15, 25].includes(x.value as number))
+    else if (
+      x.key === "maxSeconds" &&
+      [10, 15, 25, 45, 60, 90].includes(x.value as number)
+    )
       pref.maxSeconds = x.value as Settings["maxSeconds"];
+    else if (x.key === "narration" && typeof x.value === "boolean")
+      pref.narration = x.value;
+    else if (x.key === "voice" && (x.value === "alba" || x.value === "marius"))
+      pref.voice = x.value;
     else if (x.key === "theme" && (x.value === "light" || x.value === "dark"))
       pref.theme = x.value;
     else throw new Error("Invalid settings");
-    atomic(settingsFile, { version: 1, ...pref });
+    atomic(settingsFile, { version: 2, ...pref });
     updateProberInstructions(pref.enabled);
     ctx.events.emit("settings-changed", {});
     return pref;
@@ -198,14 +251,24 @@ export function activate(ctx: PluginBackendContext) {
           : item.error,
       enabled: settings().enabled,
       installed: runtime.runtimeInstalled(),
+      speechInstalled: runtime.pocketInstalled(),
+      narration: validTimeline(item.plan) && settings().narration,
+      speechDownloadMiB: POCKET_MIB,
       platform: runtime.asset
         ? { downloadMiB: runtime.asset.downloadMiB, disk: runtime.asset.disk }
         : null,
     };
   });
   ctx.handle("start", (input) => {
-    const x = input as { id?: unknown; download?: unknown };
-    start(x?.id, x?.download === true);
+    const x = input as {
+      id?: unknown;
+      downloadRuntime?: unknown;
+      downloadSpeech?: unknown;
+    };
+    start(x?.id, {
+      runtime: x?.downloadRuntime === true,
+      speech: x?.downloadSpeech === true,
+    });
     return { ok: true };
   });
   ctx.handle("cancel", (input) => {
@@ -254,7 +317,7 @@ export function activate(ctx: PluginBackendContext) {
   });
   ctx.registerInstructions({
     agents: ["teacher"],
-    text: "When a learner requests a visual explainer and the Raea tool is available, use it to create a brief silent captioned video. Diagram coordinates are normalized: x/y are upper left, width/height are fractional canvas bounds. For sequences use separately positioned text for each item, coloring the compared item yellow, eliminated items red, and found items green. Keep the explanation and a quick comprehension check in the lesson.",
+    text: "When a learner requests a visual explainer and the Raea tool is available, create a short animated video, narrated when narration is enabled. Use diagrams and narration to explain step by step, then keep the explanation and a quick comprehension check in the lesson.",
   });
   ctx.registerTools({
     agents: ["teacher"],
@@ -265,8 +328,8 @@ export function activate(ctx: PluginBackendContext) {
               name: "raea_explainer_video",
               label: "Explainer video",
               replay: "never",
-              description: `Create a short silent explainer video from 2–5 scenes, at most ${settings().maxSeconds} seconds total. Use only when a video helps explain a concept or the learner asks for one. Supply meaningful heading, caption and diagram elements. Coordinates are normalized from 0 to 1 within the diagram area: x/y are the top-left of each box, width/height are its size. Text is left-aligned within its box, not stretched across it. For a list, put each value in a separate text element at explicit evenly spaced coordinates; use its text color to distinguish compared, discarded, kept or found values. Do not put an entire list in one text element or use separate highlight shapes with guessed positions. If using a shape behind a label, give both exactly the same box coordinates. Check every highlight covers only its intended values. Shapes paint behind text. Text and formulas are plain text. Rendering happens locally and may require learner approval for a one-time runtime download. Continue teaching; do not claim it has finished.`,
-              parameters: videoSchema,
+              description: `Create a smooth animated math explainer, at most ${settings().maxSeconds} seconds. Return version 2 and 2–8 scenes with short spoken narration and captions. Leave enough time for speech; use at most ${narrationWordLimit(settings().maxSeconds, settings().maxSeconds <= 25 ? 3 : 5)} spoken words total. For a limit of 25 seconds or less, use two or three scenes. Set each scene seconds to 2 unless a longer visual pause is essential; measured narration can extend the scene. Graphs use x from -2 to 2 and show y=a*x²+b*x+c, y=a*x+b, or y=a*sin(b*x)+c; point and other are x positions for a moving secant. Keep coefficients fixed across related scenes so points move continuously. A line through distinct points is a secant, even when they are very close; describe it as approaching the tangent. Only call it the tangent when point and other are equal, where the analytic derivative gives its slope. When dividing by h, state that h is nonzero. An interval uses sorted values and valid zero-based low, high, focus indices. Vector x and y are components from -3 to 3 and move continuously between scenes. Equations are short plain Unicode, not markup. Give each beat a clear concise heading, caption and narration. Rendering is local and may require a one-time model download. Continue teaching without claiming rendering has finished.`,
+              parameters: timelineSchema,
               execute: async (callId, input, signal) => {
                 if (
                   signal?.aborted ||
@@ -275,12 +338,23 @@ export function activate(ctx: PluginBackendContext) {
                 )
                   throw new Error("Video creation is disabled or cancelled");
                 if (
-                  !validVideoPlan(input) ||
+                  !validTimeline(input) ||
                   input.scenes.reduce((sum, scene) => sum + scene.seconds, 0) >
                     settings().maxSeconds
                 )
                   throw new Error(
                     "Invalid plan or duration exceeds the configured maximum",
+                  );
+                if (
+                  settings().narration &&
+                  narrationWordCount(input) >
+                    narrationWordLimit(
+                      settings().maxSeconds,
+                      input.scenes.length,
+                    )
+                )
+                  throw new Error(
+                    `Narration exceeds the selected length budget. Use at most ${narrationWordLimit(settings().maxSeconds, input.scenes.length)} spoken words or increase the maximum in settings.`,
                   );
                 const id = createHash("sha256")
                   .update(context.chatId + "\0" + callId)
@@ -298,10 +372,16 @@ export function activate(ctx: PluginBackendContext) {
                   id,
                   chatId: context.chatId,
                   plan: input,
+                  maxSeconds: settings().maxSeconds,
                   status: "pending",
                 };
                 save(item);
-                if (runtime.runtimeInstalled() && !running) start(id, false);
+                if (
+                  runtime.runtimeInstalled() &&
+                  (!settings().narration || runtime.pocketInstalled()) &&
+                  !running
+                )
+                  start(id, { runtime: false, speech: false });
                 return {
                   content: [
                     {

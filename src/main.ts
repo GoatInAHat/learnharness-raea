@@ -6,7 +6,9 @@ import type {
 
 type Settings = {
   enabled: boolean;
-  maxSeconds: 10 | 15 | 25;
+  maxSeconds: 10 | 15 | 25 | 45 | 60 | 90;
+  narration: boolean;
+  voice: "alba" | "marius";
   theme: "dark" | "light";
 };
 type Status = {
@@ -15,6 +17,10 @@ type Status = {
   plan: { title: string; scenes: { heading: string; caption: string }[] };
   enabled: boolean;
   installed: boolean;
+  speechInstalled: boolean;
+  speechDownloadMiB: number;
+  narration: boolean;
+  activity?: string;
   platform: { downloadMiB: number; disk: string } | null;
 };
 export async function activate(ctx: PluginFrontendContext) {
@@ -40,11 +46,34 @@ export async function activate(ctx: PluginFrontendContext) {
         description: "Applies to newly created plans.",
         value: String(preferences.maxSeconds),
         disabled: saving,
-        options: [10, 15, 25].map((n) => ({
+        options: [10, 15, 25, 45, 60, 90].map((n) => ({
           value: String(n),
           label: `${n} seconds`,
         })),
         onChange: (value) => save("maxSeconds", Number(value)),
+      },
+      {
+        key: "narration",
+        type: "toggle",
+        label: "Narration",
+        description:
+          "Use an offline English-language voice for new animations. The first use downloads a voice model.",
+        value: preferences.narration,
+        disabled: saving,
+        onChange: (value) => save("narration", value),
+      },
+      {
+        key: "voice",
+        type: "dropdown",
+        label: "Narrator voice",
+        description: "Applies to new renders.",
+        value: preferences.voice,
+        disabled: saving || !preferences.narration,
+        options: [
+          { value: "alba", label: "Alba" },
+          { value: "marius", label: "Marius" },
+        ],
+        onChange: (value) => save("voice", value),
       },
       {
         key: "theme",
@@ -214,7 +243,7 @@ export async function activate(ctx: PluginFrontendContext) {
         settingsButton();
         status.textContent =
           item.status === "running"
-            ? "Rendering video…"
+            ? item.activity || "Rendering video…"
             : item.status === "done"
               ? "Video ready"
               : item.error || "Video ready to render";
@@ -232,11 +261,19 @@ export async function activate(ctx: PluginFrontendContext) {
             "Video rendering is unavailable on this platform.";
         else
           button(
-            item.installed
-              ? "Render video"
-              : `Download Raea (${item.platform.downloadMiB} MiB; ${item.platform.disk}) and render`,
+            !item.installed && item.narration && !item.speechInstalled
+              ? `Download Raea (${item.platform.downloadMiB} MiB; ${item.platform.disk}) and local voice model (${item.speechDownloadMiB} MiB), then render`
+              : !item.installed
+                ? `Download Raea (${item.platform.downloadMiB} MiB; ${item.platform.disk}) and render`
+                : item.narration && !item.speechInstalled
+                  ? `Download local voice model (${item.speechDownloadMiB} MiB) and render`
+                  : "Render video",
             async () => {
-              await ctx.call("start", { id, download: !item.installed });
+              await ctx.call("start", {
+                id,
+                downloadRuntime: !item.installed,
+                downloadSpeech: item.narration && !item.speechInstalled,
+              });
               await refresh();
             },
           );
@@ -247,7 +284,7 @@ export async function activate(ctx: PluginFrontendContext) {
           details.append(summary);
           for (const scene of item.plan.scenes) {
             const p = document.createElement("p");
-            p.textContent = `${scene.heading}: ${scene.caption}`;
+            p.textContent = `${scene.heading}: ${"narration" in scene ? scene.narration : scene.caption}`;
             details.append(p);
           }
           content.append(details);

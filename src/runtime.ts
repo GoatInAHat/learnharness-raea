@@ -3,7 +3,21 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { videoRuntime, videoPaintOrder, type VideoPlan } from "./video.ts";
+import {
+  videoRuntime,
+  videoPaintOrder,
+  validVideoPlan,
+  type VideoPlan,
+} from "./video.ts";
+import { validTimeline, type TimelinePlan } from "./timeline.ts";
+import { timelineComposition } from "./timeline-render.ts";
+import { hasPlayableAudioTrack } from "./mp4-audio.ts";
+import {
+  installPocket,
+  pocketInstalled,
+  verifyPocket,
+  rendererEnvironment,
+} from "./pocket.ts";
 
 export function createRuntime(root: string) {
   const RELEASE =
@@ -16,6 +30,8 @@ export function createRuntime(root: string) {
     "bin",
     process.platform === "win32" ? "raea.exe" : "raea",
   );
+  let modelInvalid = false;
+  const pocketReady = () => !modelInvalid && pocketInstalled(root);
   const runtimeInstalled = () => {
     try {
       return (
@@ -31,7 +47,7 @@ export function createRuntime(root: string) {
     cwd: string,
     signal: AbortSignal,
     env: NodeJS.ProcessEnv,
-  ): Promise<void> {
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
         reject(new Error("Cancelled"));
@@ -40,9 +56,13 @@ export function createRuntime(root: string) {
       const child = spawn(command, args, {
         cwd,
         env,
-        stdio: ["ignore", "ignore", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
-      let error = "";
+      let error = "",
+        output = "";
+      child.stdout?.on("data", (chunk) => {
+        output = (output + String(chunk)).slice(-12000);
+      });
       let spawnError: Error | undefined;
       const abort = () => child.kill("SIGKILL");
       if (signal.aborted) abort();
@@ -57,7 +77,7 @@ export function createRuntime(root: string) {
         signal.removeEventListener("abort", abort);
         if (signal.aborted) reject(new Error("Cancelled or timed out"));
         else if (spawnError) reject(spawnError);
-        else if (code === 0) resolve();
+        else if (code === 0) resolve(output);
         else reject(new Error(`Renderer failed (${code}): ${error}`));
       });
     });
@@ -205,47 +225,117 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
   }
 
   async function render(
-    plan: VideoPlan,
+    plan: VideoPlan | TimelinePlan,
     output: string,
     theme: "dark" | "light",
-    download: boolean,
+    consent: { runtime: boolean; speech: boolean },
     signal: AbortSignal,
+    options: {
+      narration: boolean;
+      voice: "alba" | "marius";
+      maxSeconds: number;
+      progress?: (text: string) => void;
+    },
   ) {
     if (!asset)
       throw new Error("Video rendering is not available on this platform.");
-    if (!runtimeInstalled() && !download)
+    if (!validVideoPlan(plan) && !validTimeline(plan))
+      throw new Error("Invalid saved video plan.");
+    if (!runtimeInstalled() && !consent.runtime)
       throw new Error("Runtime download needs your approval.");
-    if (!runtimeInstalled()) await install(signal);
+    if (!runtimeInstalled()) {
+      options.progress?.("Downloading Raea runtime…");
+      await install(signal);
+    }
+    const narrated = validTimeline(plan) && options.narration;
+    if (narrated && !pocketReady()) {
+      if (!consent.speech)
+        throw new Error("Narration model download needs your approval.");
+      let lastPercent = -1;
+      await installPocket(
+        root,
+        signal,
+        (done, total) => {
+          const percent = Math.floor((done / total) * 100);
+          if (percent !== lastPercent && !signal.aborted) {
+            lastPercent = percent;
+            options.progress?.(`Downloading narration model: ${percent}%`);
+          }
+        },
+        modelInvalid,
+      );
+      modelInvalid = false;
+    }
+    if (narrated && !(await verifyPocket(root, signal))) {
+      modelInvalid = true;
+      throw new Error(
+        "Narration model failed its integrity check. Download it again to repair.",
+      );
+    }
+    options.progress?.("Rendering video…");
     signal.throwIfAborted();
     const work = await fsp.mkdtemp(path.join(root, "render-"));
     try {
       const source = path.join(work, "scene.tsx");
       const tempOutput = path.join(work, "video.mp4");
-      await fsp.writeFile(source, composition(plan, theme));
+      await fsp.writeFile(
+        source,
+        validTimeline(plan)
+          ? timelineComposition(plan, {
+              theme,
+              narration: narrated,
+              voice: options.voice,
+              maxSeconds: options.maxSeconds,
+            })
+          : composition(plan, theme),
+      );
+      const env = rendererEnvironment(root, work);
+      const bounce = path.join(work, "narration.wav");
+      if (narrated && process.platform !== "darwin")
+        env.RAEA_AUDIO_BOUNCE = bounce;
       await run(
         binary,
         ["render", source, "-o", tempOutput],
         work,
         AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
-        {
-          NODE_ENV: "production",
-          RAEA_OFFLINE: "1",
-          RAEA_NO_TREE: "1",
-          RAEA_ENV_FILE: path.join(work, "env"),
-          RAEA_CACHE: path.join(work, "cache"),
-          ...(process.platform === "win32"
-            ? {
-                SystemRoot: process.env.SystemRoot || "C:\\Windows",
-                TEMP: work,
-                TMP: work,
-              }
-            : {}),
-          ...((process.platform === "win32" || process.platform === "linux") &&
-          process.env.WGPU_BACKEND === "vulkan"
-            ? { WGPU_BACKEND: "vulkan" }
-            : {}),
-        },
+        env,
       );
+      if (narrated) {
+        const audioFile = process.platform === "darwin" ? tempOutput : bounce;
+        if (process.platform === "darwin") {
+          const probe = JSON.parse(
+            await run(
+              binary,
+              ["media", "probe", tempOutput],
+              work,
+              signal,
+              env,
+            ),
+          );
+          if (!probe.audio || !(probe.audio.duration > 0))
+            throw new Error("Narration audio is missing from the video.");
+        } else {
+          const stat = await fsp.lstat(tempOutput);
+          if (
+            !stat.isFile() ||
+            stat.size < 1 ||
+            stat.size > 25_000_000 ||
+            !hasPlayableAudioTrack(await fsp.readFile(tempOutput))
+          )
+            throw new Error("Narration audio track is missing from the video.");
+        }
+        const loudness = JSON.parse(
+          await run(
+            binary,
+            ["media", "loudness", audioFile],
+            work,
+            signal,
+            env,
+          ),
+        );
+        if (typeof loudness.max_db !== "number" || loudness.max_db < -70)
+          throw new Error("Narration audio is silent.");
+      }
       const stat = await fsp.lstat(tempOutput);
       if (!stat.isFile() || stat.size === 0 || stat.size > 25_000_000)
         throw new Error("Renderer did not produce a valid video file.");
@@ -255,5 +345,11 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       await fsp.rm(work, { recursive: true, force: true });
     }
   }
-  return { asset, runtimeInstalled, render, composition };
+  return {
+    asset,
+    runtimeInstalled,
+    pocketInstalled: pocketReady,
+    render,
+    composition,
+  };
 }
