@@ -11,6 +11,7 @@ import {
 } from "./video.ts";
 import { validTimeline, type TimelinePlan } from "./timeline.ts";
 import { timelineComposition } from "./timeline-render.ts";
+import { hasPlayableAudioTrack } from "./mp4-audio.ts";
 import {
   installPocket,
   pocketInstalled,
@@ -289,6 +290,9 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
           : composition(plan, theme),
       );
       const env = rendererEnvironment(root, work);
+      const bounce = path.join(work, "narration.wav");
+      if (narrated && process.platform !== "darwin")
+        env.RAEA_AUDIO_BOUNCE = bounce;
       await run(
         binary,
         ["render", source, "-o", tempOutput],
@@ -297,15 +301,33 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
         env,
       );
       if (narrated) {
-        const probe = JSON.parse(
-          await run(binary, ["media", "probe", tempOutput], work, signal, env),
-        );
-        if (!probe.audio || !(probe.audio.duration > 0))
-          throw new Error("Narration audio is missing from the video.");
+        const audioFile = process.platform === "darwin" ? tempOutput : bounce;
+        if (process.platform === "darwin") {
+          const probe = JSON.parse(
+            await run(
+              binary,
+              ["media", "probe", tempOutput],
+              work,
+              signal,
+              env,
+            ),
+          );
+          if (!probe.audio || !(probe.audio.duration > 0))
+            throw new Error("Narration audio is missing from the video.");
+        } else {
+          const stat = await fsp.lstat(tempOutput);
+          if (
+            !stat.isFile() ||
+            stat.size < 1 ||
+            stat.size > 25_000_000 ||
+            !hasPlayableAudioTrack(await fsp.readFile(tempOutput))
+          )
+            throw new Error("Narration audio track is missing from the video.");
+        }
         const loudness = JSON.parse(
           await run(
             binary,
-            ["media", "loudness", tempOutput],
+            ["media", "loudness", audioFile],
             work,
             signal,
             env,

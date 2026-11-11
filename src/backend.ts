@@ -7,6 +7,8 @@ import { createRuntime } from "./runtime.ts";
 import {
   timelineSchema,
   validTimeline,
+  narrationWordLimit,
+  narrationWordCount,
   type TimelinePlan,
 } from "./timeline.ts";
 import { POCKET_MIB } from "./pocket.ts";
@@ -326,7 +328,7 @@ export function activate(ctx: PluginBackendContext) {
               name: "raea_explainer_video",
               label: "Explainer video",
               replay: "never",
-              description: `Create a smooth animated math explainer, at most ${settings().maxSeconds} seconds. Return version 2 and 2–8 scenes with short spoken narration and captions. Leave enough time for speech; target at most ${Math.floor(settings().maxSeconds * 2)} spoken words total. Graphs use x from -2 to 2 and show y=a*x²+b*x+c, y=a*x+b, or y=a*sin(b*x)+c; point and other are x positions for a moving secant. Keep coefficients fixed across related scenes so points move continuously. An interval uses sorted values and valid zero-based low, high, focus indices. Vector x and y are components from -3 to 3 and move continuously between scenes. Equations are short plain Unicode, not markup. Give each beat a clear concise heading, caption and narration. Rendering is local and may require a one-time model download. Continue teaching without claiming rendering has finished.`,
+              description: `Create a smooth animated math explainer, at most ${settings().maxSeconds} seconds. Return version 2 and 2–8 scenes with short spoken narration and captions. Leave enough time for speech; use at most ${narrationWordLimit(settings().maxSeconds, settings().maxSeconds <= 25 ? 3 : 5)} spoken words total. For a limit of 25 seconds or less, use two or three scenes. Set each scene seconds to 2 unless a longer visual pause is essential; measured narration can extend the scene. Graphs use x from -2 to 2 and show y=a*x²+b*x+c, y=a*x+b, or y=a*sin(b*x)+c; point and other are x positions for a moving secant. Keep coefficients fixed across related scenes so points move continuously. An interval uses sorted values and valid zero-based low, high, focus indices. Vector x and y are components from -3 to 3 and move continuously between scenes. Equations are short plain Unicode, not markup. Give each beat a clear concise heading, caption and narration. Rendering is local and may require a one-time model download. Continue teaching without claiming rendering has finished.`,
               parameters: timelineSchema,
               execute: async (callId, input, signal) => {
                 if (
@@ -342,6 +344,17 @@ export function activate(ctx: PluginBackendContext) {
                 )
                   throw new Error(
                     "Invalid plan or duration exceeds the configured maximum",
+                  );
+                if (
+                  settings().narration &&
+                  narrationWordCount(input) >
+                    narrationWordLimit(
+                      settings().maxSeconds,
+                      input.scenes.length,
+                    )
+                )
+                  throw new Error(
+                    `Narration exceeds the selected length budget. Use at most ${narrationWordLimit(settings().maxSeconds, input.scenes.length)} spoken words or increase the maximum in settings.`,
                   );
                 const id = createHash("sha256")
                   .update(context.chatId + "\0" + callId)

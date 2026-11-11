@@ -94,3 +94,21 @@ export function validTimeline(value: unknown): value is TimelinePlan {
     })
   );
 }
+
+/** Reserve room for pauses and use a conservative speech rate for model guidance. */
+export function narrationWordLimit(
+  maxSeconds: number,
+  sceneCount: number,
+): number {
+  return Math.max(
+    1,
+    Math.floor(Math.max(0, maxSeconds - sceneCount * 0.65) * 1.5),
+  );
+}
+export function narrationWordCount(plan: TimelinePlan): number {
+  return plan.scenes.reduce(
+    (sum, scene) =>
+      sum + scene.narration.trim().split(/\s+/u).filter(Boolean).length,
+    0,
+  );
+}
