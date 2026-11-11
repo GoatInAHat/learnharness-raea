@@ -21,3 +21,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+Pocket TTS narration model assets (downloaded separately; not included in this package):
+Kyutai Pocket TTS, CC BY 4.0: https://huggingface.co/kyutai/pocket-tts-without-voice-cloning
+KevinAHM Pocket TTS ONNX export, CC BY 4.0: https://huggingface.co/KevinAHM/pocket-tts-onnx
+mlx-community Pocket TTS tokenizer, CC BY 4.0: https://huggingface.co/mlx-community/pocket-tts
+License: https://creativecommons.org/licenses/by/4.0/
+Exact immutable revisions, filenames, sizes and SHA-256 hashes are recorded in src/pocket-assets.json.

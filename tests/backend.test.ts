@@ -35,8 +35,10 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
       handlers.get(name)!(input) as any;
     assert.deepEqual(call("settings"), {
       enabled: true,
-      maxSeconds: 25,
+      maxSeconds: 60,
       theme: "dark",
+      narration: true,
+      voice: "alba",
     });
     call("save-settings", { key: "maxSeconds", value: 10 });
     call("save-settings", { key: "theme", value: "light" });
@@ -44,6 +46,8 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
       enabled: true,
       maxSeconds: 10,
       theme: "light",
+      narration: true,
+      voice: "alba",
     });
     assert.throws(
       () => call("save-settings", { key: "maxSeconds", value: 11 }),
@@ -53,12 +57,18 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
     if (!tools.length) return; // Unsupported CPU or OS.
     assert.ok(instructions.has("prober"));
     const plan = {
+      version: 2,
       title: "Test",
       scenes: [1, 2].map(() => ({
         heading: "Step",
         caption: "Caption",
+        narration: "A concise sentence.",
         seconds: 5,
-        elements: [],
+        diagram: {
+          kind: "equation",
+          expression: "x = 2",
+          annotation: "A value.",
+        },
       })),
     };
     const a = await tools[0].execute(
@@ -111,7 +121,7 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
     assert.throws(() => call("chunk", { id: record.id, offset: 1 }), /offset/);
     assert.throws(() => call("chunk", { id: "../bad", offset: 0 }), /ID/);
     const future = JSON.stringify({
-      version: 2,
+      version: 3,
       enabled: true,
       future: "preserve",
     });
