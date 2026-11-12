@@ -1,4 +1,6 @@
 /** Read only bounded ISO-BMFF metadata from the renderer's own output. */
+export const genericVideoBytes = 25_000_000;
+export const semanticVideoBytes = 50_000_000;
 type Box = { type: string; start: number; end: number };
 function boxes(bytes: Buffer, start: number, end: number): Box[] {
   const result: Box[] = [];
@@ -32,8 +34,21 @@ function read32(bytes: Buffer, box: Box, offset: number): number {
     throw new Error("Truncated MP4 metadata");
   return bytes.readUInt32BE(box.start + offset);
 }
-export function hasPlayableAudioTrack(bytes: Buffer): boolean {
-  if (bytes.length < 8 || bytes.length > 25_000_000)
+export function hasVideoPayload(bytes: Buffer): boolean {
+  const top = boxes(bytes, 0, bytes.length);
+  const moov = top.find((box) => box.type === "moov");
+  if (!moov || !top.some((box) => box.type === "ftyp" && box.end - box.start >= 8) ||
+    !top.some((box) => box.type === "mdat" && box.end > box.start)) return false;
+  return boxes(bytes, moov.start, moov.end).some((track) => {
+    if (track.type !== "trak") return false;
+    const mdia = child(bytes, track, "mdia");
+    const handler = mdia && child(bytes, mdia, "hdlr");
+    return handler && handler.start + 12 <= handler.end &&
+      bytes.toString("ascii", handler.start + 8, handler.start + 12) === "vide";
+  });
+}
+export function hasPlayableAudioTrack(bytes: Buffer, maxBytes = genericVideoBytes): boolean {
+  if (bytes.length < 8 || bytes.length > maxBytes)
     throw new Error("Invalid MP4 size");
   const top = boxes(bytes, 0, bytes.length);
   const moov = top.find((box) => box.type === "moov");

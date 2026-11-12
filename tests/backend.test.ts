@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PluginBackendContext } from "../sdk/index.ts";
 import { activate } from "../src/backend.ts";
+import { quadratic } from "./semantic-fixtures.ts";
 
 test("tool admission, settings, saved videos, and bounded media", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "raea-test-"));
@@ -104,6 +105,24 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
         ),
       /duration/,
     );
+    assert.equal(tools.length, 1);
+    call("save-settings", { key: "maxSeconds", value: 120 });
+    const math = factory({ chatId: "chat-one", agent: "teacher" })
+      .find((tool: { name: string }) => tool.name === "raea_semantic_math_video");
+    assert.ok(math);
+    const result = await math.execute("math", quadratic, new AbortController().signal);
+    const id = result.details.id;
+    const mathRecord = path.join(directory, "videos", id + ".json");
+    const mathFile = path.join(directory, "videos", id + ".mp4");
+    assert.deepEqual(call("status", { id }).transcript, quadratic.beats.map((beat) => beat.narration));
+    const completed = JSON.parse(readFileSync(mathRecord, "utf8"));
+    writeFileSync(mathRecord, JSON.stringify({ ...completed, status: "done" }));
+    writeFileSync(mathFile, "test video");
+    truncateSync(mathFile, 25_000_001);
+    assert.equal(call("chunk", { id, offset: 0 }).size, 25_000_001);
+    truncateSync(mathFile, 50_000_001);
+    assert.equal(call("status", { id }).status, "error");
+
     call("save-settings", { key: "enabled", value: false });
     assert.equal(factory({ chatId: "chat-one", agent: "teacher" }).length, 0);
     assert.equal(instructions.has("prober"), false);

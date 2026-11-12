@@ -24,7 +24,7 @@ Linux requires a compatible glibc (2.39 or newer), Vulkan graphics, ALSA and fon
 
 ## Settings and saved videos
 
-Open **Settings → Community plugins → Raea Explainer** or use **Video settings** on a video card. **Allow new explainer videos** defaults on; turning it off blocks new plans and renders while existing videos remain playable. Choose a maximum length of 10, 15, 25, 45, 60 or 90 seconds for new plans (60 seconds by default for new installations), a dark or light theme, whether to narrate, and the Alba or Marius voice. Existing preferences remain in place after updates. Videos have captions and a transcript; there is no background music.
+Open **Settings → Community plugins → Raea Explainer** or use **Video settings** on a video card. **Allow new explainer videos** defaults on; turning it off blocks new plans and renders while existing videos remain playable. Choose a maximum length of 10, 15, 25, 45, 60, 90 or 120 seconds for new plans (60 seconds by default for new installations), a dark or light theme, whether to narrate, and the Alba or Marius voice. Existing preferences remain in place after updates. Videos have captions and a transcript; there is no background music.
 
 Disabling the entire community plugin hides its video renderer until it is enabled again. This does not delete the plugin’s saved plans, videos or runtime. To update, replace only `raea-explainer/dist/`, preserve sibling `data/`, and restart LearnHarness. Raea runs as a separate executable, not as model-generated code; the teacher supplies bounded declarative scene data.
 
@@ -41,6 +41,19 @@ npm run install:local -- "<plugins directory>"
 ```
 
 The portable installer only replaces `dist/`, preserves `data/`, and never enables plugins or starts the host. Refresh and enable a new install; restart after changing loaded code. The bundled SDK contains generated public, type-only LearnHarness declarations. Runtime JavaScript does not import host-private modules.
+
+### Compare an authored lesson locally
+
+Set the plugin's maximum length to 90 or 120 seconds to make the semantic math tool available to the teacher. The existing shorter tool remains available for other diagram types. The teacher uses the active conversation model.
+
+From a source checkout, pass a [v3 plan](src/semantic-math.schema.json) and an optional cue-aligned PCM narration master to the comparison command. Use a separate output directory for private media.
+
+```sh
+npm run compare -- /path/to/plan.json /path/to/comparison.mp4 \
+  --archive /path/to/official-raea-rc2-archive --wav /path/to/master.wav
+```
+
+The command verifies the pinned archive before use. Omit `--archive` to download it into the temporary comparison directory. Pass `--pocket` to synthesize the plan with the approved local Alba voice, or omit both audio flags to render a silent review. The WAV must be mono 16-bit PCM at 16–48 kHz, span the full lesson, and follow its cue windows. Pass `--no-captions` to hide optional authored captions. This command uses an isolated temporary directory beside the output and does not open LearnHarness.
 
 ## License and attribution
 

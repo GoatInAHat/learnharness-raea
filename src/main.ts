@@ -1,12 +1,14 @@
 import type {
   PluginFrontendContext,
   PluginSettingsSchema,
+  PluginToolRenderer,
   PluginWidgetHandle,
 } from "../sdk/index.ts";
+import { genericVideoBytes, semanticVideoBytes } from "./mp4-audio.ts";
 
 type Settings = {
   enabled: boolean;
-  maxSeconds: 10 | 15 | 25 | 45 | 60 | 90;
+  maxSeconds: 10 | 15 | 25 | 45 | 60 | 90 | 120;
   narration: boolean;
   voice: "alba" | "marius";
   theme: "dark" | "light";
@@ -14,7 +16,7 @@ type Settings = {
 type Status = {
   status: string;
   error?: string;
-  plan: { title: string; scenes: { heading: string; caption: string }[] };
+  transcript: string[];
   enabled: boolean;
   installed: boolean;
   speechInstalled: boolean;
@@ -46,7 +48,7 @@ export async function activate(ctx: PluginFrontendContext) {
         description: "Applies to newly created plans.",
         value: String(preferences.maxSeconds),
         disabled: saving,
-        options: [10, 15, 25, 45, 60, 90].map((n) => ({
+        options: [10, 15, 25, 45, 60, 90, 120].map((n) => ({
           value: String(n),
           label: `${n} seconds`,
         })),
@@ -114,8 +116,7 @@ export async function activate(ctx: PluginFrontendContext) {
         })
         .catch(() => {});
   });
-  ctx.registerToolRenderer({
-    toolName: "raea_explainer_video",
+  const videoRenderer = (maxBytes: number): Pick<PluginToolRenderer, "mount"> => ({
     mount(container, tool) {
       let url: string | undefined,
         disposed = false,
@@ -190,7 +191,7 @@ export async function activate(ctx: PluginFrontendContext) {
           if (
             !Number.isSafeInteger(chunk.size) ||
             chunk.size < 1 ||
-            chunk.size > 25_000_000 ||
+            chunk.size > maxBytes ||
             (total && total !== chunk.size)
           )
             throw new Error("Video changed while loading");
@@ -282,9 +283,9 @@ export async function activate(ctx: PluginFrontendContext) {
           const summary = document.createElement("summary");
           summary.textContent = "Video transcript";
           details.append(summary);
-          for (const scene of item.plan.scenes) {
+          for (const line of item.transcript) {
             const p = document.createElement("p");
-            p.textContent = `${scene.heading}: ${"narration" in scene ? scene.narration : scene.caption}`;
+            p.textContent = line;
             details.append(p);
           }
           content.append(details);
@@ -322,6 +323,8 @@ export async function activate(ctx: PluginFrontendContext) {
       };
     },
   });
+  ctx.registerToolRenderer({ toolName: "raea_explainer_video", ...videoRenderer(genericVideoBytes) });
+  ctx.registerToolRenderer({ toolName: "raea_semantic_math_video", ...videoRenderer(semanticVideoBytes) });
   return () => {
     offSettings();
     widget.dispose();

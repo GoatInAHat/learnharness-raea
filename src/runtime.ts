@@ -11,7 +11,10 @@ import {
 } from "./video.ts";
 import { validTimeline, type TimelinePlan } from "./timeline.ts";
 import { timelineComposition } from "./timeline-render.ts";
-import { hasPlayableAudioTrack } from "./mp4-audio.ts";
+import { validSemanticPlan, type SemanticPlan } from "./semantic-math.ts";
+import { semanticComposition } from "./semantic-render.ts";
+import { validateComparisonWav } from "./comparison-wav.ts";
+import { genericVideoBytes, hasPlayableAudioTrack, hasVideoPayload, semanticVideoBytes } from "./mp4-audio.ts";
 import {
   installPocket,
   pocketInstalled,
@@ -19,7 +22,14 @@ import {
   rendererEnvironment,
 } from "./pocket.ts";
 
-export function createRuntime(root: string) {
+export type RenderPlan = VideoPlan | TimelinePlan | SemanticPlan;
+export const isSemantic = (plan: RenderPlan): plan is SemanticPlan =>
+  !!plan && typeof plan === "object" && "version" in plan && plan.version === 3;
+export const canNarrate = (plan: RenderPlan) => "version" in plan;
+export const videoByteLimit = (plan: RenderPlan) =>
+  isSemantic(plan) ? semanticVideoBytes : genericVideoBytes;
+
+export function createRuntime(root: string, localArchive?: string) {
   const RELEASE =
     "https://github.com/shinyobjectz/raea/releases/download/v0.1.1-rc2/";
   const asset = videoRuntime(process.platform, process.arch);
@@ -92,33 +102,49 @@ export function createRuntime(root: string) {
     );
     const archive = path.join(stage, asset.archive);
     try {
-      const response = await fetch(RELEASE + asset.archive, {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(600_000)]),
-      });
-      if (!response.ok || !response.body) {
-        await response.body?.cancel();
-        throw new Error(`Download failed (${response.status})`);
+      const archiveSignal = AbortSignal.any([signal, AbortSignal.timeout(600_000)]);
+      async function* chunks(): AsyncGenerator<Uint8Array> {
+        if (localArchive) {
+          const input = await fsp.open(localArchive, fs.constants.O_RDONLY |
+            (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+          try {
+            const stat = await input.stat();
+            if (!stat.isFile() || stat.size !== asset!.size)
+              throw new Error("Runtime archive size mismatch");
+            for await (const chunk of input.createReadStream({ signal: archiveSignal, autoClose: false }))
+              yield chunk as Buffer;
+          } finally {
+            await input.close();
+          }
+          return;
+        }
+        const response = await fetch(RELEASE + asset!.archive, { signal: archiveSignal });
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw new Error(`Download failed (${response.status})`);
+        }
+        const reader = response.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            yield value;
+          }
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
       }
       const file = await fsp.open(archive, "wx", 0o600);
       const hash = createHash("sha256");
       let size = 0;
       try {
-        const reader = response.body.getReader();
-        try {
-          while (true) {
-            const { done, value: chunk } = await reader.read();
-            if (done) break;
-            size += chunk.length;
-            if (size > asset.size)
-              throw new Error("Runtime download exceeds expected size");
-            hash.update(chunk);
-            await file.writeFile(chunk);
-          }
-        } catch (error) {
-          await reader.cancel().catch(() => {});
-          throw error;
-        } finally {
-          reader.releaseLock();
+        for await (const chunk of chunks()) {
+          size += chunk.length;
+          if (size > asset.size)
+            throw new Error("Runtime download exceeds expected size");
+          hash.update(chunk);
+          await file.writeFile(chunk);
         }
       } finally {
         await file.close();
@@ -225,7 +251,7 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
   }
 
   async function render(
-    plan: VideoPlan | TimelinePlan,
+    plan: RenderPlan,
     output: string,
     theme: "dark" | "light",
     consent: { runtime: boolean; speech: boolean },
@@ -234,21 +260,32 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       narration: boolean;
       voice: "alba" | "marius";
       maxSeconds: number;
+      wav?: Buffer;
+      captions?: boolean;
       progress?: (text: string) => void;
     },
   ) {
     if (!asset)
       throw new Error("Video rendering is not available on this platform.");
-    if (!validVideoPlan(plan) && !validTimeline(plan))
+    const semantic = isSemantic(plan);
+    if (semantic ? !validSemanticPlan(plan) : !validVideoPlan(plan) && !validTimeline(plan))
       throw new Error("Invalid saved video plan.");
+    if (semantic && plan.durationSeconds > options.maxSeconds)
+      throw new Error("Video plan exceeds the selected maximum length.");
+    if (options.wav) {
+      if (!semantic) throw new Error("Comparison WAV requires a semantic math plan.");
+      validateComparisonWav(options.wav, plan);
+    }
+    const narrated = canNarrate(plan) && (options.narration || !!options.wav);
+    const pocket = narrated && !options.wav;
+    const maxBytes = videoByteLimit(plan);
     if (!runtimeInstalled() && !consent.runtime)
       throw new Error("Runtime download needs your approval.");
     if (!runtimeInstalled()) {
-      options.progress?.("Downloading Raea runtime…");
+      options.progress?.(localArchive ? "Verifying Raea runtime…" : "Downloading Raea runtime…");
       await install(signal);
     }
-    const narrated = validTimeline(plan) && options.narration;
-    if (narrated && !pocketReady()) {
+    if (pocket && !pocketReady()) {
       if (!consent.speech)
         throw new Error("Narration model download needs your approval.");
       let lastPercent = -1;
@@ -266,7 +303,7 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       );
       modelInvalid = false;
     }
-    if (narrated && !(await verifyPocket(root, signal))) {
+    if (pocket && !(await verifyPocket(root, signal))) {
       modelInvalid = true;
       throw new Error(
         "Narration model failed its integrity check. Download it again to repair.",
@@ -278,28 +315,43 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
     try {
       const source = path.join(work, "scene.tsx");
       const tempOutput = path.join(work, "video.mp4");
-      await fsp.writeFile(
-        source,
-        validTimeline(plan)
-          ? timelineComposition(plan, {
-              theme,
-              narration: narrated,
-              voice: options.voice,
-              maxSeconds: options.maxSeconds,
-            })
-          : composition(plan, theme),
-      );
+      if (semantic) {
+        const edit = semanticComposition(plan, {
+          theme, voice: options.voice, captions: options.captions,
+          audio: options.wav ? "wav" : pocket ? "pocket" : "none",
+        });
+        const media = path.join(work, "media");
+        await fsp.mkdir(media, { mode: 0o700 });
+        for (const [id, svg] of Object.entries(edit.assets))
+          await fsp.writeFile(path.join(media, id + ".svg"), svg, { mode: 0o600 });
+        if (options.wav)
+          await fsp.writeFile(path.join(media, "narration.wav"), options.wav, { mode: 0o600 });
+        await fsp.writeFile(source, edit.source, { mode: 0o600 });
+      } else {
+        await fsp.writeFile(
+          source,
+          validTimeline(plan)
+            ? timelineComposition(plan, { theme, narration: narrated, voice: options.voice, maxSeconds: options.maxSeconds })
+            : composition(plan as VideoPlan, theme),
+          { mode: 0o600 },
+        );
+      }
       const env = rendererEnvironment(root, work);
       const bounce = path.join(work, "narration.wav");
       if (narrated && process.platform !== "darwin")
         env.RAEA_AUDIO_BOUNCE = bounce;
       await run(
         binary,
-        ["render", source, "-o", tempOutput],
+        ["render", source, "-o", tempOutput, ...(semantic ? ["--kbps", "2300"] : [])],
         work,
-        AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
+        AbortSignal.any([signal, AbortSignal.timeout(semantic ? 420_000 : 180_000)]),
         env,
       );
+      const stat = await fsp.lstat(tempOutput);
+      if (!stat.isFile() || stat.size === 0 || stat.size > maxBytes)
+        throw new Error("Renderer did not produce a valid video file.");
+      const bytes = await fsp.readFile(tempOutput);
+      if (!hasVideoPayload(bytes)) throw new Error("Renderer did not produce a playable video.");
       if (narrated) {
         const audioFile = process.platform === "darwin" ? tempOutput : bounce;
         if (process.platform === "darwin") {
@@ -314,15 +366,8 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
           );
           if (!probe.audio || !(probe.audio.duration > 0))
             throw new Error("Narration audio is missing from the video.");
-        } else {
-          const stat = await fsp.lstat(tempOutput);
-          if (
-            !stat.isFile() ||
-            stat.size < 1 ||
-            stat.size > 25_000_000 ||
-            !hasPlayableAudioTrack(await fsp.readFile(tempOutput))
-          )
-            throw new Error("Narration audio track is missing from the video.");
+        } else if (!hasPlayableAudioTrack(bytes, maxBytes)) {
+          throw new Error("Narration audio track is missing from the video.");
         }
         const loudness = JSON.parse(
           await run(
@@ -333,12 +378,9 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
             env,
           ),
         );
-        if (typeof loudness.max_db !== "number" || loudness.max_db < -70)
+        if (!Number.isFinite(loudness.max_db) || loudness.max_db < -70)
           throw new Error("Narration audio is silent.");
       }
-      const stat = await fsp.lstat(tempOutput);
-      if (!stat.isFile() || stat.size === 0 || stat.size > 25_000_000)
-        throw new Error("Renderer did not produce a valid video file.");
       signal.throwIfAborted();
       fs.renameSync(tempOutput, output);
     } finally {

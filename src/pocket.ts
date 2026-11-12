@@ -126,6 +126,7 @@ export function rendererEnvironment(
   return {
     NODE_ENV: "production",
     RAEA_OFFLINE: "1",
+    TMPDIR: work,
     RAEA_NO_TREE: "1",
     RAEA_ENV_FILE: path.join(work, "env"),
     RAEA_CACHE: path.join(work, "cache"),

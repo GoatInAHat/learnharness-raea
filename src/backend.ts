@@ -2,20 +2,20 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import type { PluginBackendContext } from "../sdk/index.ts";
-import { videoSchema, validVideoPlan, type VideoPlan } from "./video.ts";
-import { createRuntime } from "./runtime.ts";
+import { validVideoPlan } from "./video.ts";
+import { canNarrate, createRuntime, isSemantic, videoByteLimit, type RenderPlan } from "./runtime.ts";
+import { endFrame, semanticFps, semanticSchema, validSemanticPlan } from "./semantic-math.ts";
 import {
   timelineSchema,
   validTimeline,
   narrationWordLimit,
   narrationWordCount,
-  type TimelinePlan,
 } from "./timeline.ts";
 import { POCKET_MIB } from "./pocket.ts";
 
 type Settings = {
   enabled: boolean;
-  maxSeconds: 10 | 15 | 25 | 45 | 60 | 90;
+  maxSeconds: 10 | 15 | 25 | 45 | 60 | 90 | 120;
   narration: boolean;
   voice: "alba" | "marius";
   theme: "dark" | "light";
@@ -24,7 +24,7 @@ type RecordData = {
   version: 1;
   id: string;
   chatId: string;
-  plan: VideoPlan | TimelinePlan;
+  plan: RenderPlan;
   maxSeconds?: number;
   activity?: string;
   status: "pending" | "running" | "done" | "error";
@@ -79,7 +79,7 @@ export function activate(ctx: PluginBackendContext) {
       throw new Error("Unsupported video settings format");
     return {
       enabled: typeof x.enabled === "boolean" ? x.enabled : true,
-      maxSeconds: [10, 15, 25, 45, 60, 90].includes(x.maxSeconds)
+      maxSeconds: [10, 15, 25, 45, 60, 90, 120].includes(x.maxSeconds)
         ? x.maxSeconds
         : 60,
       narration: typeof x.narration === "boolean" ? x.narration : true,
@@ -105,10 +105,10 @@ export function activate(ctx: PluginBackendContext) {
       throw new Error("Invalid video ID");
     return path.join(records, id + extension);
   };
-  const usableMedia = (id: string) => {
+  const usableMedia = (item: RecordData) => {
     try {
-      const stat = fs.lstatSync(file(id, ".mp4"));
-      return stat.isFile() && stat.size > 0 && stat.size <= 25_000_000;
+      const stat = fs.lstatSync(file(item.id, ".mp4"));
+      return stat.isFile() && stat.size > 0 && stat.size <= videoByteLimit(item.plan);
     } catch {
       return false;
     }
@@ -118,7 +118,7 @@ export function activate(ctx: PluginBackendContext) {
     if (
       item.version !== 1 ||
       item.id !== id ||
-      !(validVideoPlan(item.plan) || validTimeline(item.plan))
+      !(validVideoPlan(item.plan) || validTimeline(item.plan) || validSemanticPlan(item.plan))
     )
       throw new Error("Invalid video record");
     return item;
@@ -144,7 +144,7 @@ export function activate(ctx: PluginBackendContext) {
     if (!runtime.runtimeInstalled() && !consent.runtime)
       throw new Error("Runtime download needs your approval.");
     if (
-      validTimeline(item.plan) &&
+      canNarrate(item.plan) &&
       pref.narration &&
       !runtime.pocketInstalled() &&
       !consent.speech
@@ -154,7 +154,7 @@ export function activate(ctx: PluginBackendContext) {
       throw new Error(
         "Another video is rendering; try again when it finishes.",
       );
-    if (item.status === "done" && usableMedia(item.id)) return;
+    if (item.status === "done" && usableMedia(item)) return;
     fs.rmSync(file(item.id, ".mp4"), { force: true });
     const controller = new AbortController();
     item.status = "running";
@@ -224,7 +224,7 @@ export function activate(ctx: PluginBackendContext) {
       pref.enabled = x.value;
     else if (
       x.key === "maxSeconds" &&
-      [10, 15, 25, 45, 60, 90].includes(x.value as number)
+      [10, 15, 25, 45, 60, 90, 120].includes(x.value as number)
     )
       pref.maxSeconds = x.value as Settings["maxSeconds"];
     else if (x.key === "narration" && typeof x.value === "boolean")
@@ -241,9 +241,13 @@ export function activate(ctx: PluginBackendContext) {
   });
   ctx.handle("status", (input) => {
     const item = read((input as { id?: unknown })?.id);
-    const mediaAvailable = usableMedia(item.id);
+    const mediaAvailable = usableMedia(item);
     return {
       ...item,
+      transcript: isSemantic(item.plan)
+        ? item.plan.beats.map((beat) => beat.narration)
+        : item.plan.scenes.map((scene) =>
+          `${scene.heading}: ${"narration" in scene ? scene.narration : scene.caption}`),
       status: item.status === "done" && !mediaAvailable ? "error" : item.status,
       error:
         item.status === "done" && !mediaAvailable
@@ -252,7 +256,7 @@ export function activate(ctx: PluginBackendContext) {
       enabled: settings().enabled,
       installed: runtime.runtimeInstalled(),
       speechInstalled: runtime.pocketInstalled(),
-      narration: validTimeline(item.plan) && settings().narration,
+      narration: canNarrate(item.plan) && settings().narration,
       speechDownloadMiB: POCKET_MIB,
       platform: runtime.asset
         ? { downloadMiB: runtime.asset.downloadMiB, disk: runtime.asset.disk }
@@ -299,7 +303,7 @@ export function activate(ctx: PluginBackendContext) {
       if (
         !stat.isFile() ||
         stat.size < 1 ||
-        stat.size > 25_000_000 ||
+        stat.size > videoByteLimit(item.plan) ||
         (x.offset as number) >= stat.size
       )
         throw new Error("Invalid video file");
@@ -319,6 +323,49 @@ export function activate(ctx: PluginBackendContext) {
     agents: ["teacher"],
     text: "When a learner requests a visual explainer and the Raea tool is available, create a short animated video, narrated when narration is enabled. Use diagrams and narration to explain step by step, then keep the explanation and a quick comprehension check in the lesson.",
   });
+  const admit = (signal?: AbortSignal) => {
+    const pref = settings();
+    if (signal?.aborted || ctx.signal.aborted || !pref.enabled)
+      throw new Error("Video creation is disabled or cancelled");
+    return pref;
+  };
+  const persist = (chatId: string, callId: string, plan: RenderPlan, pref: Settings) => {
+    const id = createHash("sha256")
+      .update(chatId + "\0" + callId)
+      .digest("hex")
+      .slice(0, 36);
+    if (fs.existsSync(file(id, ".json")))
+      return {
+        content: [
+          { type: "text" as const, text: "Video plan already saved." },
+        ],
+        details: { id },
+      };
+    const item: RecordData = {
+      version: 1,
+      id,
+      chatId,
+      plan,
+      maxSeconds: pref.maxSeconds,
+      status: "pending",
+    };
+    save(item);
+    if (
+      runtime.runtimeInstalled() &&
+      (!pref.narration || runtime.pocketInstalled()) &&
+      !running
+    )
+      start(id, { runtime: false, speech: false });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Video plan saved. The inline video card shows rendering or first-use setup.",
+        },
+      ],
+      details: { id },
+    };
+  };
   ctx.registerTools({
     agents: ["teacher"],
     create: (context) =>
@@ -331,68 +378,49 @@ export function activate(ctx: PluginBackendContext) {
               description: `Create a smooth animated math explainer, at most ${settings().maxSeconds} seconds. Return version 2 and 2–8 scenes with short spoken narration and captions. Leave enough time for speech; use at most ${narrationWordLimit(settings().maxSeconds, settings().maxSeconds <= 25 ? 3 : 5)} spoken words total. For a limit of 25 seconds or less, use two or three scenes. Set each scene seconds to 2 unless a longer visual pause is essential; measured narration can extend the scene. Graphs use x from -2 to 2 and show y=a*x²+b*x+c, y=a*x+b, or y=a*sin(b*x)+c; point and other are x positions for a moving secant. Keep coefficients fixed across related scenes so points move continuously. A line through distinct points is a secant, even when they are very close; describe it as approaching the tangent. Only call it the tangent when point and other are equal, where the analytic derivative gives its slope. When dividing by h, state that h is nonzero. An interval uses sorted values and valid zero-based low, high, focus indices. Vector x and y are components from -3 to 3 and move continuously between scenes. Equations are short plain Unicode, not markup. Give each beat a clear concise heading, caption and narration. Rendering is local and may require a one-time model download. Continue teaching without claiming rendering has finished.`,
               parameters: timelineSchema,
               execute: async (callId, input, signal) => {
-                if (
-                  signal?.aborted ||
-                  ctx.signal.aborted ||
-                  !settings().enabled
-                )
-                  throw new Error("Video creation is disabled or cancelled");
+                const pref = admit(signal);
                 if (
                   !validTimeline(input) ||
                   input.scenes.reduce((sum, scene) => sum + scene.seconds, 0) >
-                    settings().maxSeconds
+                    pref.maxSeconds
                 )
                   throw new Error(
                     "Invalid plan or duration exceeds the configured maximum",
                   );
                 if (
-                  settings().narration &&
+                  pref.narration &&
                   narrationWordCount(input) >
                     narrationWordLimit(
-                      settings().maxSeconds,
+                      pref.maxSeconds,
                       input.scenes.length,
                     )
                 )
                   throw new Error(
-                    `Narration exceeds the selected length budget. Use at most ${narrationWordLimit(settings().maxSeconds, input.scenes.length)} spoken words or increase the maximum in settings.`,
+                    `Narration exceeds the selected length budget. Use at most ${narrationWordLimit(pref.maxSeconds, input.scenes.length)} spoken words or increase the maximum in settings.`,
                   );
-                const id = createHash("sha256")
-                  .update(context.chatId + "\0" + callId)
-                  .digest("hex")
-                  .slice(0, 36);
-                if (fs.existsSync(file(id, ".json")))
-                  return {
-                    content: [
-                      { type: "text", text: "Video plan already saved." },
-                    ],
-                    details: { id },
-                  };
-                const item: RecordData = {
-                  version: 1,
-                  id,
-                  chatId: context.chatId,
-                  plan: input,
-                  maxSeconds: settings().maxSeconds,
-                  status: "pending",
-                };
-                save(item);
-                if (
-                  runtime.runtimeInstalled() &&
-                  (!settings().narration || runtime.pocketInstalled()) &&
-                  !running
-                )
-                  start(id, { runtime: false, speech: false });
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Video plan saved. The inline video card shows rendering or first-use setup.",
-                    },
-                  ],
-                  details: { id },
-                };
+                return persist(context.chatId, callId, input, pref);
               },
             },
+            ...(settings().maxSeconds < 90 ? [] : [{
+              name: "raea_semantic_math_video",
+              label: "Math explainer video",
+              replay: "never" as const,
+              description: `Make a 90–${settings().maxSeconds} second graph-based explainer of secants, limits and derivatives. Provide one function AST (x is the independent variable), and 5–8 chronological beats. Use 30 frames/second. Beat 1 starts and settles at frame zero. Later beats can use up to 150 frames to move the points and zoom the graph. At each target place P=(a,f(a)) and Q=(a+h,f(a+h)) within the camera, where x and y are its center and width and height are full extents. Set cueFrame at least 12 frames after settleFrame and leave room for the entire short spoken utterance and a final 9-frame pause before the next beat. Use nonzero h for difference, secant and limit. Use exactly zero for tangent and compare. Compare also needs a different reference x visible in the camera. Give the axes concise quantity labels and include an optional slope unit. Supply natural spoken sentences and optional short captions as plain text. Continue teaching without claiming the render has finished.`,
+              parameters: semanticSchema,
+              execute: async (callId: string, input: unknown, signal?: AbortSignal) => {
+                const pref = admit(signal);
+                if (!validSemanticPlan(input) || input.durationSeconds > pref.maxSeconds)
+                  throw new Error("Invalid semantic plan or duration exceeds the configured maximum");
+                if (pref.narration) {
+                  for (const [i, beat] of input.beats.entries()) {
+                    const available = (endFrame(input, i) - 9 - beat.cueFrame) / semanticFps;
+                    if (beat.narration.trim().split(/\s+/u).length > Math.floor(available * 2.5))
+                      throw new Error(`Narration exceeds the cue window at beat ${i + 1}.`);
+                  }
+                }
+                return persist(context.chatId, callId, input, pref);
+              },
+            }]),
           ]
         : [],
   });
