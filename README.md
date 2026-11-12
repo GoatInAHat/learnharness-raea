@@ -2,6 +2,8 @@
 
 Create narrated, captioned mathematical animations directly in a LearnHarness lesson. The teacher uses your existing configured model; Raea renders the visual locally. Videos appear in the conversation with playback controls and a text transcript.
 
+This branch previews 0.3.0, including longer graph explainers and narration during purposeful motion. The stable download below is 0.2.0. Build the preview from source with the commands under Develop.
+
 ## See it in action
 
 ![A frame from a binary-search explainer](examples/binary-search.png)
