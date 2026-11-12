@@ -166,7 +166,7 @@ function Graph({shot}){
     {xt.map(x=><div key={x} style={pos(105+px(x)-40,612,{width:80,textAlign:'center',fontSize:17,color:color.muted})}>{format(x,5)}</div>)}
     {yt.map(y=><div key={y} style={pos(23,145+py(y),{width:70,textAlign:'right',fontSize:17,color:color.muted})}>{format(y,5)}</div>)}
     <div style={pos(105,116,{fontSize:20,color:color.muted})}>{yLabel}</div>
-    <div style={pos(570,644,{width:305,textAlign:'right',fontSize:20,color:color.muted})}>{xLabel}</div>
+    <div style={pos(570,633,{width:305,textAlign:'right',fontSize:18,color:color.muted})}>{xLabel}</div>
   </>;
 }
 
