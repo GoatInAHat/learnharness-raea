@@ -39,16 +39,20 @@ const defaults: Settings = {
 };
 const idPattern = /^[a-f0-9-]{36}$/;
 const chunkSize = 512 * 1024;
-export function activate(ctx: PluginBackendContext) {
+export function activate(
+  ctx: PluginBackendContext,
+  runtimeFactory: typeof createRuntime = createRuntime,
+) {
   fs.mkdirSync(ctx.dataDirectory, { recursive: true, mode: 0o700 });
   const root = ctx.dataDirectory,
     records = path.join(root, "videos"),
     settingsFile = path.join(root, "settings.json");
   fs.mkdirSync(records, { recursive: true, mode: 0o700 });
-  const runtime = createRuntime(root);
+  const runtime = runtimeFactory(root);
   let running:
     | { id: string; controller: AbortController; finished: Promise<void> }
     | undefined;
+  let repairing: Promise<void> | undefined;
   const atomic = (file: string, value: unknown) => {
     const temp = file + "." + randomUUID() + ".tmp";
     try {
@@ -135,6 +139,8 @@ export function activate(ctx: PluginBackendContext) {
     consent: { runtime: boolean; speech: boolean },
   ) => {
     assertActive();
+    if (repairing)
+      throw new Error("Raea runtime repair is in progress; wait for it to finish before rendering.");
     const item = read(id);
     const pref = settings();
     if (!pref.enabled)
@@ -277,6 +283,8 @@ export function activate(ctx: PluginBackendContext) {
     };
     if (runtime.runtimeInstalled()) {
       await runtime.check(ctx.signal);
+      if (repairing)
+        throw new Error("Raea runtime repair is in progress; wait for it to finish before rendering.");
       if (runtime.runtimeRepairRequired())
         throw new Error("The pinned Raea runtime is damaged; use the explicit Repair Raea runtime action.");
     }
@@ -292,10 +300,16 @@ export function activate(ctx: PluginBackendContext) {
       throw new Error("Runtime repair requires explicit confirmation.");
     if (runtime.runtimeUnsafe())
       throw new Error("Raea runtime path is unsafe (symlink or non-directory); resolve it manually before repair.");
-    if (!runtime.runtimeRepairRequired())
-      throw new Error("The Raea runtime does not need repair.");
     if (running) throw new Error("Wait for the active video render to finish before repairing Raea.");
-    await runtime.repair(ctx.signal);
+    if (!runtime.asset) throw new Error("Video rendering is unavailable on this platform.");
+    if (!repairing) {
+      const operation = runtime.repair(ctx.signal);
+      repairing = operation;
+      void operation.finally(() => {
+        if (repairing === operation) repairing = undefined;
+      }).catch(() => {});
+    }
+    await repairing;
     ctx.events.emit("runtime-changed", {});
     return { ok: true };
   });

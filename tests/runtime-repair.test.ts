@@ -37,8 +37,10 @@ test("runtime core detects missing SDK, truncated bundle, and lost execute bit",
   assert.equal(inspectRuntimeCore(f.root, f.paths, f.expected, process.platform), undefined);
   fs.writeFileSync(bundle, "core-1");
 
-  fs.chmodSync(path.join(f.root, ...f.paths[0]!), 0o600);
-  assert.equal(inspectRuntimeCore(f.root, f.paths, f.expected, process.platform), undefined);
+  if (process.platform !== "win32") {
+    fs.chmodSync(path.join(f.root, ...f.paths[0]!), 0o600);
+    assert.equal(inspectRuntimeCore(f.root, f.paths, f.expected, process.platform), undefined);
+  }
 });
 
 test("runtime core refuses symlinked SDK directories", (t) => {
@@ -47,7 +49,7 @@ test("runtime core refuses symlinked SDK directories", (t) => {
   const sdk = path.join(f.root, "raea", "share", "raea", "sdk");
   const moved = sdk + ".saved";
   fs.renameSync(sdk, moved);
-  fs.symlinkSync(moved, sdk, "dir");
+  fs.symlinkSync(moved, sdk, process.platform === "win32" ? "junction" : "dir");
   assert.equal(inspectRuntimeCore(f.root, f.paths, f.expected, process.platform), undefined);
 });
 
