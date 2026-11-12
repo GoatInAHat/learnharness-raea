@@ -70,13 +70,13 @@ test("semantic plans reject unsafe data and invalid interval indices", () => {
 test("renderer uses a single clean offline environment without inherited credentials", () => {
   const env = rendererEnvironment("/private/plugin", "/private/job");
   assert.equal(env.RAEA_OFFLINE, "1");
+  assert.equal(env.HOME, "/private/job");
   assert.equal(env.RAEA_FEED_MODELS, path.join("/private/plugin", "models"));
   assert.equal(
     env.RAEA_SPEECH_CACHE,
     path.join("/private/job", "speech-cache"),
   );
   for (const key of [
-    "HOME",
     "HF_TOKEN",
     "DEEPGRAM_API_KEY",
     "ANTHROPIC_API_KEY",

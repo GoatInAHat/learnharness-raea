@@ -4,7 +4,7 @@ import { randomUUID, createHash } from "node:crypto";
 import type { PluginBackendContext } from "../sdk/index.ts";
 import { validVideoPlan } from "./video.ts";
 import { canNarrate, createRuntime, isSemantic, videoByteLimit, type RenderPlan } from "./runtime.ts";
-import { endFrame, semanticFps, semanticSchema, validSemanticPlan } from "./semantic-math.ts";
+import { narrationWindow, semanticFps, semanticSchema, validSemanticPlan } from "./semantic-math.ts";
 import {
   timelineSchema,
   validTimeline,
@@ -405,7 +405,7 @@ export function activate(ctx: PluginBackendContext) {
               name: "raea_semantic_math_video",
               label: "Math explainer video",
               replay: "never" as const,
-              description: `Make a 90–${settings().maxSeconds} second graph-based explainer of secants, limits and derivatives. Provide one function AST (x is the independent variable), and 5–8 chronological beats. Use 30 frames/second. Beat 1 starts and settles at frame zero. Later beats can use up to 150 frames to move the points and zoom the graph. At each target place P=(a,f(a)) and Q=(a+h,f(a+h)) within the camera, where x and y are its center and width and height are full extents. Set cueFrame at least 12 frames after settleFrame and leave room for the entire short spoken utterance and a final 9-frame pause before the next beat. Use nonzero h for difference, secant and limit. Use exactly zero for tangent and compare. Compare also needs a different reference x visible in the camera. Give the axes concise quantity labels and include an optional slope unit. Supply natural spoken sentences and optional short captions as plain text. Continue teaching without claiming the render has finished.`,
+              description: `Make a 90–${settings().maxSeconds} second graph-based explainer of secants, limits and derivatives. Provide one function AST (x is the independent variable), and 5–8 chronological beats. Use 30 frames/second. Beat 1 starts and settles at frame zero. Later beats can use up to 150 frames to move the points and zoom the graph, or up to 300 for process narration. At each target place P=(a,f(a)) and Q=(a+h,f(a+h)) within the camera, where x and y are its center and width and height are full extents. For target values, formulas and state claims, omit narrationScope or use settled and set cueFrame at least 12 frames after settleFrame. Use narrationScope process only to describe ongoing movement. In a process beat, move the camera or change a or h while the preceding display shows the points, put cueFrame strictly after startFrame and at least 12 frames before settleFrame, and settle before the beat ends. Leave room for the entire utterance and a final 9-frame pause before the next beat. Use nonzero h for difference, secant and limit. Use exactly zero for tangent and compare. Compare also needs a different reference x visible in the camera. Give the axes concise quantity labels and include an optional slope unit. Supply natural spoken sentences and optional short captions as plain text. Continue teaching without claiming the render has finished.`,
               parameters: semanticSchema,
               execute: async (callId: string, input: unknown, signal?: AbortSignal) => {
                 const pref = admit(signal);
@@ -413,7 +413,8 @@ export function activate(ctx: PluginBackendContext) {
                   throw new Error("Invalid semantic plan or duration exceeds the configured maximum");
                 if (pref.narration) {
                   for (const [i, beat] of input.beats.entries()) {
-                    const available = (endFrame(input, i) - 9 - beat.cueFrame) / semanticFps;
+                    const { cueFrame, speechEndFrame } = narrationWindow(input, i);
+                    const available = (speechEndFrame - cueFrame) / semanticFps;
                     if (beat.narration.trim().split(/\s+/u).length > Math.floor(available * 2.5))
                       throw new Error(`Narration exceeds the cue window at beat ${i + 1}.`);
                   }

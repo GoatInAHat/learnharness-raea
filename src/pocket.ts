@@ -126,6 +126,7 @@ export function rendererEnvironment(
   return {
     NODE_ENV: "production",
     RAEA_OFFLINE: "1",
+    HOME: work,
     TMPDIR: work,
     RAEA_NO_TREE: "1",
     RAEA_ENV_FILE: path.join(work, "env"),
@@ -137,6 +138,7 @@ export function rendererEnvironment(
           SystemRoot: process.env.SystemRoot || "C:\\Windows",
           TEMP: work,
           TMP: work,
+          USERPROFILE: work,
         }
       : {}),
     ...((process.platform === "win32" || process.platform === "linux") &&

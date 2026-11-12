@@ -5,9 +5,10 @@ import { liteAdaptor } from "mathjax-full/js/adaptors/liteAdaptor.js";
 import { RegisterHTMLHandler } from "mathjax-full/js/handlers/html.js";
 import "mathjax-full/js/input/tex/ams/AmsConfiguration.js";
 import type { LiteElement } from "mathjax-full/js/adaptors/lite/Element.js";
-import { sampleCurve, semanticFps, semanticFrame, type SemanticPlan } from "./semantic-math.ts";
+import { narrationWindow, sampleCurve, semanticFps, semanticFrame, type SemanticPlan } from "./semantic-math.ts";
 
 const plot = { width: 770, height: 450 };
+const resolutionScale = 1.5;
 const themes = {
   dark: {
     bg: "#111820", plot: "#14212a", ink: "#f1f4f2", muted: "#a8bac4",
@@ -53,8 +54,8 @@ function typeset(plan: SemanticPlan, ink: string) {
     const scale = Math.min(0.039, 282 / w, 102 / h);
     const width = Math.ceil(w * scale), height = Math.ceil(h * scale);
     if (!(width > 0 && height > 0)) throw new Error("Invalid formula dimensions");
-    adaptor.setAttribute(svg, "width", String(width));
-    adaptor.setAttribute(svg, "height", String(height));
+    adaptor.setAttribute(svg, "width", String(width * resolutionScale));
+    adaptor.setAttribute(svg, "height", String(height * resolutionScale));
     assets[id] = adaptor.outerHTML(svg).replaceAll("currentColor", ink);
     sizes[id] = { width, height };
   }
@@ -85,7 +86,9 @@ export function semanticComposition(
   }));
   const data = JSON.stringify(JSON.stringify({
     title, xLabel, yLabel, slopeUnit, variable, color, sizes, shots,
-    beats: beats.map(({ startFrame, cueFrame, narration, caption }) => ({ startFrame, cueFrame, narration, caption })),
+    beats: beats.map(({ startFrame, narration, caption }, i) => ({
+      startFrame, narration, caption, ...narrationWindow(plan, i),
+    })),
     frames: plan.durationSeconds * semanticFps,
     fps: semanticFps, plot, ...options,
   }));
@@ -102,12 +105,16 @@ const {title,xLabel,yLabel,slopeUnit,variable,color,sizes,shots,beats,frames,fps
 const {width:W,height:H}=plot;
 if(audio==='pocket') beats.forEach((b,i)=>{
   const duration=speechDuration({text:b.narration,voice});
-  const last=beats[i+1]?.startFrame??frames;
   if(!Number.isFinite(duration)||duration<=0) throw new Error('Narration could not be generated.');
-  if(b.cueFrame+Math.ceil(duration*fps)>last-9) throw new Error('Narration at beat '+(i+1)+' exceeds its cue window. Shorten that utterance.');
+  if(b.cueFrame+Math.ceil(duration*fps)>b.speechEndFrame) throw new Error('Narration at beat '+(i+1)+' exceeds its cue window. Shorten that utterance.');
 });
 
-const pos=(left,top,style={})=>({position:'absolute',left,top,...style});
+const pxSize=n=>n*${resolutionScale};
+const lengths=['width','height','fontSize','borderRadius'];
+const pos=(left,top,style={})=>({
+  position:'absolute',left:pxSize(left),top:pxSize(top),
+  ...Object.fromEntries(Object.entries(style).map(([name,value])=>[name,lengths.includes(name)?pxSize(value):value])),
+});
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const format=(n,digits=4)=>Number(n.toPrecision(digits)).toString().replace('-','−');
 const value=(n,digits=4)=>format(n,digits)+(slopeUnit?' '+slopeUnit:'');
@@ -134,11 +141,11 @@ function Graph({shot}){
   function label(point,name,ink,above){
     const x=px(point.x), y=py(point.y);
     if(x<0||x>W||y<0||y>H)return null;
-    return <div style={pos(clamp(x+10,4,W-28),clamp(y+(above?-33:10),2,H-26),{color:ink,fontSize:19,fontWeight:700,backgroundColor:color.plot,borderRadius:3,padding:'0 3px'})}>{name}</div>;
+    return <div style={pos(clamp(x+10,4,W-28),clamp(y+(above?-33:10),2,H-26),{color:ink,fontSize:19,fontWeight:700,backgroundColor:color.plot,borderRadius:3,padding:'0 '+pxSize(3)+'px'})}>{name}</div>;
   }
   return <>
     <div style={pos(105,155,{width:W,height:H,backgroundColor:color.plot,overflow:'hidden'})}>
-      <svg width={W} height={H} viewBox={'0 0 '+W+' '+H} style={pos(0,0)}>
+      <svg width={pxSize(W)} height={pxSize(H)} viewBox={'0 0 '+W+' '+H} style={pos(0,0)}>
         <defs><clipPath id="plot"><rect x="0" y="0" width={W} height={H}/></clipPath></defs>
         <g clipPath="url(#plot)">
           {xt.map(x=><line key={x} x1={px(x)} y1="0" x2={px(x)} y2={H} stroke={x===0?color.axis:color.grid} strokeWidth={x===0?1.8:1}/>)}
@@ -173,22 +180,23 @@ function Notes({shot}){
   const line=display==='secant'||display==='limit'||display==='tangent'||display==='compare';
   const tangent=h===0;
   const ink=tangent?color.tangent:color.q;
+  const pointX=format(p.x,7), otherX=format(q.x,7);
   return <>
     <Formula id="function" left={934} top={156}/>
     <div style={pos(934,214,{width:282,height:1,backgroundColor:color.axis})}/>
     {display!=='function'&&<Formula id={display} left={934} top={247}/>}
     {display!=='function'&&display!=='compare'&&<div style={pos(934,374,{fontSize:23,color:color.muted})}>
-      <div style={{color:color.p}}>P · {variable} = {format(p.x,6)}</div>
-      <div style={{marginTop:10,color:tangent?color.muted:color.q}}>{tangent?'Q = P':'Q · '+variable+' = '+format(q.x,7)}</div>
-      {display!=='points'&&<div style={{marginTop:13,color:ink}}>h = {h===0?'0':format(h,3)}</div>}
-      {display==='difference'&&<div style={{marginTop:10,color:ink}}>Δy = {format(rise,4)}</div>}
+      <div style={{color:color.p}}>P · {variable} = {pointX}</div>
+      <div style={{marginTop:pxSize(10),color:tangent?color.muted:color.q}}>{tangent?'Q = P':'Q · '+variable+' = '+(pointX===otherX?'a + h':otherX)}</div>
+      {display!=='points'&&<div style={{marginTop:pxSize(13),color:ink}}>h = {h===0?'0':format(h,3)}</div>}
+      {display==='difference'&&<div style={{marginTop:pxSize(10),color:ink}}>Δy = {format(rise,4)}</div>}
     </div>}
     {line&&<div style={pos(934,reference?365:505,{fontSize:21,color:color.muted,width:305})}>
       <div>{tangent?'Tangent slope':'Secant slope'}{reference?' at P · '+variable+' = '+format(p.x,6):''}</div>
-      <div style={{fontSize:30,color:ink,fontWeight:700,marginTop:5}}>{value(slope)}</div>
-      {reference&&<div style={{marginTop:24}}>
+      <div style={{fontSize:pxSize(30),color:ink,fontWeight:700,marginTop:pxSize(5)}}>{value(slope)}</div>
+      {reference&&<div style={{marginTop:pxSize(24)}}>
         <div>Tangent slope at B · {variable} = {format(reference.x,6)}</div>
-        <div style={{fontSize:30,color:color.reference,fontWeight:700,marginTop:5}}>{value(reference.slope)}</div>
+        <div style={{fontSize:pxSize(30),color:color.reference,fontWeight:700,marginTop:pxSize(5)}}>{value(reference.slope)}</div>
       </div>}
     </div>}
   </>;
@@ -203,13 +211,13 @@ function Lesson(){
     <div style={pos(62,33,{width:1156,fontSize:Math.min(43,Math.max(27,2050/title.length)),fontWeight:700})}>{title}</div>
     <Graph shot={shot}/>
     <Notes shot={shot}/>
-    {captions!==false&&beat.caption&&frame>=beat.cueFrame&&<div style={pos(172,656,{width:918,textAlign:'center',fontSize:22,lineHeight:1.2,backgroundColor:color.bg,padding:'5px 10px',borderRadius:6})}>{beat.caption}</div>}
+    {captions!==false&&beat.caption&&frame>=beat.cueFrame&&<div style={pos(172,656,{width:918,textAlign:'center',fontSize:22,lineHeight:'120%',backgroundColor:color.bg,padding:pxSize(5)+'px '+pxSize(10)+'px',borderRadius:6})}>{beat.caption}</div>}
     {audio==='wav'&&<Audio src={staticFile('narration.wav')}/>}
     {audio==='pocket'&&<Mix lufs={-16} ceiling={-2}>
       <Speech key={i} text={beat.narration} voice={voice} start={beat.cueFrame}/>
     </Mix>}
   </AbsoluteFill>;
 }
-registerRoot(()=> <Composition id="lesson" component={Lesson} width={1280} height={720} fps={fps} durationInFrames={frames}/>);`,
+registerRoot(()=> <Composition id="lesson" component={Lesson} width={1920} height={1080} fps={fps} durationInFrames={frames}/>);`,
   };
 }

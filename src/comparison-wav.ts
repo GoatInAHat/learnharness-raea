@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { endFrame, semanticFps, type SemanticPlan } from "./semantic-math.ts";
+import { narrationWindow, semanticFps, type SemanticPlan } from "./semantic-math.ts";
 
 export const maxWavBytes = 12_000_000;
 
@@ -63,9 +63,10 @@ export function validateComparisonWav(bytes: Buffer, plan: SemanticPlan): void {
     for (let i = first; i < end; i++) max = Math.max(max, Math.abs(pcm!.readInt16LE(i * 2)));
     return max;
   }
-  for (const [i, beat] of plan.beats.entries()) {
-    const start = sampleAt(beat.cueFrame);
-    const end = sampleAt(endFrame(plan, i) - 9);
+  for (const i of plan.beats.keys()) {
+    const { cueFrame, speechEndFrame } = narrationWindow(plan, i);
+    const start = sampleAt(cueFrame);
+    const end = sampleAt(speechEndFrame);
     if (peak(previousEnd, start) > 100) throw new Error("Narration WAV has audio outside its cue windows");
     if (peak(start, end) < 16) throw new Error(`Narration WAV is silent at beat ${i + 1}`);
     previousEnd = end;

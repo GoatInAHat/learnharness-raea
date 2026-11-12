@@ -55,6 +55,13 @@ npm run compare -- /path/to/plan.json /path/to/comparison.mp4 \
 
 The command verifies the pinned archive before use. Omit `--archive` to download it into the temporary comparison directory. Pass `--pocket` to synthesize the plan with the approved local Alba voice, or omit both audio flags to render a silent review. The WAV must be mono 16-bit PCM at 16–48 kHz, span the full lesson, and follow its cue windows. Pass `--no-captions` to hide optional authored captions. This command uses an isolated temporary directory beside the output and does not open LearnHarness.
 
+To make a master for both comparison renders, request a WAV output with `--pocket`. This authorizes the pinned Pocket asset download and runs a local GPU render to capture its pre-encoder audio bounce. The command validates and saves the mono PCM master at the supplied path. Use the same master with `--wav` for subsequent renders.
+
+```sh
+npm run compare -- /path/to/plan.json /path/to/master.wav \
+  --archive /path/to/official-raea-rc2-archive --pocket
+```
+
 ## License and attribution
 
 The Pocket TTS model and its tokenizer are downloaded separately under CC BY 4.0; see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) for attribution and pinned source details. The plugin source is AGPL-3.0-only; see [LICENSE](LICENSE). The bundled TypeBox dependency is MIT licensed; see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). LearnHarness is an independent project by Amos Blomqvist. Raea is a separate project by shinyobjectz, downloaded from its official release and subject to its own [FSL-1.1-ALv2 license](https://github.com/shinyobjectz/raea/blob/v0.1.1-rc2/LICENSE). This project is not affiliated with either upstream.

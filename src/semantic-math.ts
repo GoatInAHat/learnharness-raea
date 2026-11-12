@@ -20,6 +20,7 @@ type Beat = {
   camera: Camera;
   display: Display;
   reference?: number;
+  narrationScope?: "settled" | "process";
   narration: string;
   caption?: string;
 };
@@ -166,6 +167,10 @@ export function endFrame(plan: SemanticPlan, beat: number): number {
   return plan.beats[beat + 1]?.startFrame ?? plan.durationSeconds * semanticFps;
 }
 
+export function narrationWindow(plan: SemanticPlan, index: number) {
+  return { cueFrame: plan.beats[index].cueFrame, speechEndFrame: endFrame(plan, index) - 9 };
+}
+
 type Point = { x: number; y: number };
 function lineAt(expression: Expression, a: number, h: number) {
   const [p, derivative] = evaluate(expression, a);
@@ -208,10 +213,17 @@ export function validSemanticPlan(value: unknown): value is SemanticPlan {
     for (const [i, beat] of plan.beats.entries()) {
       const { startFrame, settleFrame, cueFrame, a, h, display, camera, reference, narration, caption } = beat;
       const previous = plan.beats[i - 1];
+      const process = beat.narrationScope === "process";
+      const moves = previous && ((previous.display !== "function" && (a !== previous.a || h !== previous.h)) ||
+        camera.x !== previous.camera.x || camera.y !== previous.camera.y ||
+        camera.width !== previous.camera.width || camera.height !== previous.camera.height);
       if (
         (i === 0 ? startFrame !== 0 || settleFrame !== 0 : startFrame <= previous.startFrame) ||
-        settleFrame < startFrame || settleFrame > startFrame + 150 ||
-        cueFrame < settleFrame + 12 || cueFrame >= endFrame(plan, i) - 9 ||
+        settleFrame < startFrame || settleFrame > startFrame + (process ? 300 : 150) ||
+        (process ? !moves || cueFrame <= startFrame || cueFrame > settleFrame - 12 ||
+          settleFrame >= endFrame(plan, i)
+          : cueFrame < settleFrame + 12) ||
+        cueFrame >= narrationWindow(plan, i).speechEndFrame ||
         !plain(narration) || (caption !== undefined && !plain(caption)) ||
         !inDomain(a) || !inDomain(a + h) ||
         (h !== 0 && Math.abs(h) < 0.0001) || (previous && h * previous.h < 0) ||
@@ -262,6 +274,7 @@ export function semanticFrame(plan: SemanticPlan, frame: number) {
   const other = reference === undefined ? undefined : lineAt(plan.graph.expression, reference, 0);
   return {
     frame, index, display, camera, cueFrame: beat.cueFrame,
+    narrationScope: beat.narrationScope ?? "settled",
     ...line,
     reference: other && { ...other.p, slope: other.slope },
   };

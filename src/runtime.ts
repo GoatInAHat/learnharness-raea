@@ -13,7 +13,7 @@ import { validTimeline, type TimelinePlan } from "./timeline.ts";
 import { timelineComposition } from "./timeline-render.ts";
 import { validSemanticPlan, type SemanticPlan } from "./semantic-math.ts";
 import { semanticComposition } from "./semantic-render.ts";
-import { validateComparisonWav } from "./comparison-wav.ts";
+import { maxWavBytes, readBoundedFile, validateComparisonWav } from "./comparison-wav.ts";
 import { genericVideoBytes, hasPlayableAudioTrack, hasVideoPayload, semanticVideoBytes } from "./mp4-audio.ts";
 import {
   installPocket,
@@ -261,6 +261,7 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       voice: "alba" | "marius";
       maxSeconds: number;
       wav?: Buffer;
+      pocketMaster?: boolean;
       captions?: boolean;
       progress?: (text: string) => void;
     },
@@ -272,6 +273,8 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       throw new Error("Invalid saved video plan.");
     if (semantic && plan.durationSeconds > options.maxSeconds)
       throw new Error("Video plan exceeds the selected maximum length.");
+    if (options.pocketMaster && (!semantic || !options.narration || options.wav))
+      throw new Error("A Pocket master requires a narrated semantic plan with local Pocket speech.");
     if (options.wav) {
       if (!semantic) throw new Error("Comparison WAV requires a semantic math plan.");
       validateComparisonWav(options.wav, plan);
@@ -338,7 +341,7 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       }
       const env = rendererEnvironment(root, work);
       const bounce = path.join(work, "narration.wav");
-      if (narrated && process.platform !== "darwin")
+      if (options.pocketMaster || (narrated && process.platform !== "darwin"))
         env.RAEA_AUDIO_BOUNCE = bounce;
       await run(
         binary,
@@ -350,6 +353,20 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
       const stat = await fsp.lstat(tempOutput);
       if (!stat.isFile() || stat.size === 0 || stat.size > maxBytes)
         throw new Error("Renderer did not produce a valid video file.");
+      if (semantic && options.pocketMaster) {
+        const raw = await fsp.lstat(bounce);
+        // The native mix can be stereo float PCM. Bound it before passing it to the decoder.
+        if (!raw.isFile() || raw.size === 0 || raw.size > 4 * maxWavBytes)
+          throw new Error("Renderer did not produce a bounded Pocket audio bounce.");
+        const master = path.join(work, "master.wav");
+        await run(binary, ["media", "audio", bounce, "--mono", "--rate", "48000", "-o", master],
+          work, AbortSignal.any([signal, AbortSignal.timeout(60_000)]), env);
+        validateComparisonWav(await readBoundedFile(master, maxWavBytes), plan);
+        signal.throwIfAborted();
+        await fsp.chmod(master, 0o600);
+        await fsp.link(master, output);
+        return;
+      }
       const bytes = await fsp.readFile(tempOutput);
       if (!hasVideoPayload(bytes)) throw new Error("Renderer did not produce a playable video.");
       if (narrated) {
