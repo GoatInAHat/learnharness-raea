@@ -212,10 +212,10 @@ function Lesson(){
     <Graph shot={shot}/>
     <Notes shot={shot}/>
     {captions!==false&&beat.caption&&frame>=beat.cueFrame&&<div style={pos(172,656,{width:918,textAlign:'center',fontSize:22,lineHeight:'120%',backgroundColor:color.bg,padding:pxSize(5)+'px '+pxSize(10)+'px',borderRadius:6})}>{beat.caption}</div>}
-    {audio==='wav'&&<Audio src={staticFile('narration.wav')}/>}
+    ${options.audio === "none" ? "" : `{audio==='wav'&&<Audio src={staticFile('narration.wav')}/>}
     {audio==='pocket'&&<Mix lufs={-16} ceiling={-2}>
       <Speech key={i} text={beat.narration} voice={voice} start={beat.cueFrame}/>
-    </Mix>}
+    </Mix>}`}
   </AbsoluteFill>;
 }
 registerRoot(()=> <Composition id="lesson" component={Lesson} width={1920} height={1080} fps={fps} durationInFrames={frames}/>);`,

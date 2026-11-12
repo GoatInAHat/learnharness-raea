@@ -29,6 +29,92 @@ export const canNarrate = (plan: RenderPlan) => "version" in plan;
 export const videoByteLimit = (plan: RenderPlan) =>
   isSemantic(plan) ? semanticVideoBytes : genericVideoBytes;
 
+/** Files required by the pinned launcher to resolve its bundled SDK and target native bundle. */
+export function runtimeCoreFiles(platform: string) {
+  const binary = platform === "win32" ? "raea.exe" : "raea";
+  const bundle = platform === "darwin" ? "libraea_bundle.dylib" :
+    platform === "win32" ? "raea_bundle.dll" : "libraea_bundle.so";
+  return [
+    ["raea", "bin", binary],
+    ["raea", "bin", bundle],
+    ["raea", "share", "raea", "VERSION"],
+    ["raea", "share", "raea", "sdk", "tsconfig.base.json"],
+    ["raea", "share", "raea", "sdk", "raea", "src", "index.tsx"],
+    ["raea", "share", "raea", "sdk", "raea", "src", "prelude.ts"],
+    ["raea", "share", "raea", "sdk", "raea", "src", "asset.ts"],
+    ["raea", "share", "raea", "sdk", "raea", "src", "image.ts"],
+    ["raea", "share", "raea", "sdk", "raea", "src", "audio.ts"],
+    ["raea", "share", "raea", "sdk", "audio", "src", "speech.tsx"],
+    ["raea", "share", "raea", "sdk", "react", "js", "node_modules", "react", "package.json"],
+  ] as const;
+}
+
+export function inspectRuntimeCore(
+  runtime: string,
+  coreFiles: readonly (readonly string[])[],
+  expected: readonly (readonly [number, string])[],
+  platform: string,
+) {
+  if (coreFiles.length !== expected.length) return;
+  try {
+    const files: Array<{ target: string; sha: string; key: string }> = [];
+    for (const [index, parts] of coreFiles.entries()) {
+      const [size, sha] = expected[index]!;
+      if (!Number.isSafeInteger(size) || typeof sha !== "string" || !/^[a-f0-9]{64}$/.test(sha)) return;
+      let target = runtime;
+      for (const part of parts.slice(0, -1)) {
+        target = path.join(target, part);
+        const dir = fs.lstatSync(target);
+        if (dir.isSymbolicLink() || !dir.isDirectory()) return;
+      }
+      target = path.join(target, parts.at(-1)!);
+      const info = fs.lstatSync(target);
+      if (info.isSymbolicLink() || !info.isFile() || info.size !== size) return;
+      if (index === 0 && platform !== "win32") fs.accessSync(target, fs.constants.X_OK);
+      files.push({ target, sha, key: [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, sha].join(":") });
+    }
+    return { files, key: files.map(file => file.key).join("|") };
+  } catch { return; }
+}
+
+export async function promoteRuntime(
+  runtime: string,
+  stage: string,
+  signal: AbortSignal,
+  assertSafe: () => void,
+  renameSync: typeof fs.renameSync = fs.renameSync,
+) {
+  const parent = path.dirname(runtime);
+  const backup = await fsp.mkdtemp(path.join(parent, ".repair-"));
+  const previous = path.join(backup, "previous");
+  let preserveBackup = false;
+  try {
+    signal.throwIfAborted();
+    assertSafe();
+    if (fs.lstatSync(runtime, { throwIfNoEntry: false })) renameSync(runtime, previous);
+    try {
+      signal.throwIfAborted();
+      assertSafe();
+      renameSync(stage, runtime);
+    } catch (error) {
+      if (fs.lstatSync(previous, { throwIfNoEntry: false })) {
+        try {
+          assertSafe();
+          if (fs.lstatSync(runtime, { throwIfNoEntry: false }))
+            throw new Error("Runtime path changed during repair.");
+          renameSync(previous, runtime);
+        } catch {
+          preserveBackup = true;
+          throw new Error("Runtime repair failed; the previous runtime was preserved in its repair backup.");
+        }
+      }
+      throw error;
+    }
+  } finally {
+    if (!preserveBackup) await fsp.rm(backup, { recursive: true, force: true });
+  }
+}
+
 export function createRuntime(root: string, localArchive?: string) {
   const RELEASE =
     "https://github.com/shinyobjectz/raea/releases/download/v0.1.1-rc2/";
@@ -40,41 +126,67 @@ export function createRuntime(root: string, localArchive?: string) {
     "bin",
     process.platform === "win32" ? "raea.exe" : "raea",
   );
-  // This known executable came from the pinned Mac archive. It lets existing
-  // Mac installs migrate without another download; other legacy installs must
-  // be verified through the official archive once before being used again.
-  const legacy = process.platform === "darwin" && process.arch === "arm64" ? {
-    size: 706524048,
-    sha: "23a706c1c04d6fa8f896f7645a6990011ff1a1186a6b642bef5663aed82917db",
-  } : undefined;
+  const coreFiles = runtimeCoreFiles(process.platform);
+  const runtimeParent = path.join(root, "runtime");
+  // The pinned Mac archive's core files let an existing install verify without
+  // downloading again. Older Windows/Linux installs have no integrity record.
+  const legacy = process.platform === "darwin" && process.arch === "arm64" ? [
+    [706524048, "23a706c1c04d6fa8f896f7645a6990011ff1a1186a6b642bef5663aed82917db"],
+    [29520664, "ea58d50ae5df456d8b8f994751ce0da2a5c23a4359c88d8decf9c52dee3e537f"],
+    [10, "55421b4aa5ab908ce15be5586cefdc27a21cc99ff4771b1e216bb161f0a82671"],
+    [5023, "cbada9a5c772d9f86ada6cf2e3367abbd4b16d590591ce93a5c87682e1482581"],
+    [3648, "e8fbf14581322f5fd2e5c812d2b63e61aa51d72de96ba023d72c7e9fd1c6ad10"],
+    [929, "212e8235d6b56a2e8cfc8b7e2861388b3204bd2e1634bea83c2de3f2d2db3b06"],
+    [347, "5df502aa1106e9e4d182ac355c24776fcc399919e08a88f168fc4522e964fff5"],
+    [503, "4b9f4986b105500fac7603366b64e93e850a5b40d7bea6b891a8cc6c43b84e46"],
+    [587, "96b48ffd0196198eee8687bb32d5ae0beac92972993391443ad140c82b287ddd"],
+    [6637, "2e18e77ad72c6b2c86b7b24236dce3038cdb6f3f3b41ed1c516ec9efb59e3750"],
+    [1248, "6029fda5e660da53952cf5ddcd1e8568fc8dc0c6dcb9deaf7667fdc4c7f5a113"],
+  ] as const : undefined;
   const markerName = "verified-runtime.json";
   let verified: { key: string; ok: boolean } | undefined;
   let modelInvalid = false;
   const pocketReady = () => !modelInvalid && pocketInstalled(root);
+  function runtimePathHealth(): "missing" | "present" | "unsafe" {
+    for (const directory of [root, runtimeParent, runtime]) {
+      try {
+        const info = fs.lstatSync(directory);
+        if (info.isSymbolicLink() || !info.isDirectory()) return "unsafe";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+        return "unsafe";
+      }
+    }
+    return "present";
+  }
+  function assertRuntimePathSafe() {
+    if (runtimePathHealth() === "unsafe")
+      throw new Error("Raea runtime path contains a symlink or non-directory; resolve it before repair.");
+  }
   const runtimeStamp = () => {
     if (!asset) return;
     try {
-      if (![runtime, path.join(runtime, "raea"), path.dirname(binary)].every(dir => fs.lstatSync(dir).isDirectory())) return;
-      const binaryStat = fs.lstatSync(binary);
-      if (!binaryStat.isFile()) return;
+      if (runtimePathHealth() !== "present") return;
+      if (process.platform !== "win32") fs.accessSync(binary, fs.constants.X_OK);
       const marker = path.join(runtime, markerName);
       const stat = fs.lstatSync(marker, { throwIfNoEntry: false });
       let expected = legacy;
       if (stat) {
-        if (!stat.isFile() || stat.size > 512) return;
+        if (!stat.isFile() || stat.size > 2048) return;
         const data = JSON.parse(fs.readFileSync(marker, "utf8"));
-        if (data?.archive !== asset.sha256 || !Number.isSafeInteger(data.size) || !/^[a-f0-9]{64}$/.test(data.sha)) return;
-        expected = { size: data.size, sha: data.sha };
+        if (data?.archive !== asset.sha256) return;
+        if (Array.isArray(data.files) && data.files.length === coreFiles.length) expected = data.files;
       }
-      if (!expected || expected.size !== binaryStat.size) return;
-      return { sha: expected.sha,
-        key: [binaryStat.dev, binaryStat.ino, binaryStat.size, binaryStat.mtimeMs, binaryStat.ctimeMs, expected.sha].join(":") };
+      if (!expected) return;
+      return inspectRuntimeCore(runtime, coreFiles, expected, process.platform);
     } catch { return; }
   };
   const runtimeInstalled = () => {
     const stamp = runtimeStamp();
     return !!stamp && !(verified?.key === stamp.key && !verified.ok);
   };
+  const runtimeRepairRequired = () => runtimePathHealth() === "present" && !runtimeInstalled();
+  const runtimeUnsafe = () => runtimePathHealth() === "unsafe";
   async function binaryDigest(file: string, signal: AbortSignal) {
     const handle = await fsp.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     try {
@@ -89,7 +201,11 @@ export function createRuntime(root: string, localArchive?: string) {
     const stamp = runtimeStamp();
     if (!stamp) return false;
     if (verified?.key === stamp.key) return verified.ok;
-    const ok = (await binaryDigest(binary, signal)).sha === stamp.sha && runtimeStamp()?.key === stamp.key;
+    let ok = true;
+    for (const file of stamp.files) {
+      if ((await binaryDigest(file.target, signal)).sha !== file.sha) { ok = false; break; }
+    }
+    ok &&= runtimeStamp()?.key === stamp.key;
     verified = { key: stamp.key, ok };
     return ok;
   }
@@ -134,11 +250,13 @@ export function createRuntime(root: string, localArchive?: string) {
       });
     });
   }
-  async function install(signal: AbortSignal): Promise<void> {
-    if (runtimeInstalled() && await verifyRuntime(signal)) return;
+  async function install(signal: AbortSignal, force = false): Promise<void> {
+    if (!force && runtimeInstalled() && await verifyRuntime(signal)) return;
     if (!asset)
       throw new Error("Video rendering is not available on this platform.");
+    assertRuntimePathSafe();
     await fsp.mkdir(path.dirname(runtime), { recursive: true });
+    assertRuntimePathSafe();
     const stage = await fsp.mkdtemp(
       path.join(path.dirname(runtime), ".install-"),
     );
@@ -210,27 +328,16 @@ export function createRuntime(root: string, localArchive?: string) {
         env,
       );
       await fsp.rm(archive);
-      const staged = await binaryDigest(path.join(stage, "raea", "bin", path.basename(binary)), signal);
-      await fsp.writeFile(path.join(stage, markerName), JSON.stringify({ archive: asset.sha256, ...staged }),
+      const files = [];
+      for (const parts of coreFiles) {
+        const { size, sha } = await binaryDigest(path.join(stage, ...parts), signal);
+        files.push([size, sha]);
+      }
+      await fsp.writeFile(path.join(stage, markerName), JSON.stringify({ archive: asset.sha256, files }),
         { flag: "wx", mode: 0o600 });
       signal.throwIfAborted();
-      const backup = await fsp.mkdtemp(path.join(path.dirname(runtime), ".repair-"));
-      const previous = path.join(backup, "previous");
-      let preserveBackup = false;
-      try {
-        if (fs.lstatSync(runtime, { throwIfNoEntry: false })) fs.renameSync(runtime, previous);
-        try { fs.renameSync(stage, runtime); }
-        catch (error) {
-          if (fs.lstatSync(previous, { throwIfNoEntry: false })) {
-            try { fs.renameSync(previous, runtime); }
-            catch { preserveBackup = true; throw new Error("Runtime repair failed; the previous runtime was preserved in its repair backup."); }
-          }
-          throw error;
-        }
-        verified = undefined;
-      } finally {
-        if (!preserveBackup) await fsp.rm(backup, { recursive: true, force: true });
-      }
+      await promoteRuntime(runtime, stage, signal, assertRuntimePathSafe);
+      verified = undefined;
     } finally {
       await fsp.rm(stage, { recursive: true, force: true });
     }
@@ -333,7 +440,9 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
     const maxBytes = videoByteLimit(plan);
     const verifiedRuntime = runtimeInstalled() && await verifyRuntime(signal);
     if (!verifiedRuntime && !consent.runtime)
-      throw new Error("Runtime download needs your approval.");
+      throw new Error(runtimeRepairRequired()
+        ? "The pinned Raea runtime is damaged; use the explicit Repair Raea runtime action."
+        : "Runtime download needs your approval.");
     if (!verifiedRuntime) {
       options.progress?.(localArchive ? "Verifying Raea runtime…" : "Downloading Raea runtime…");
       await install(signal);
@@ -457,6 +566,10 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
   return {
     asset,
     runtimeInstalled,
+    runtimeRepairRequired,
+    runtimeUnsafe,
+    check(signal: AbortSignal) { return runtimeInstalled() && verifyRuntime(signal); },
+    repair(signal: AbortSignal) { return install(signal, true); },
     pocketInstalled: pocketReady,
     render,
     composition,

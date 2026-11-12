@@ -141,6 +141,10 @@ export function activate(ctx: PluginBackendContext) {
       throw new Error("New explainer videos are disabled in plugin settings.");
     if (!runtime.asset)
       throw new Error("Video rendering is unavailable on this platform.");
+    if (runtime.runtimeUnsafe())
+      throw new Error("Raea runtime path is unsafe (symlink or non-directory); resolve it manually before rendering.");
+    if (runtime.runtimeRepairRequired())
+      throw new Error("The pinned Raea runtime is damaged; use the explicit Repair Raea runtime action.");
     if (!runtime.runtimeInstalled() && !consent.runtime)
       throw new Error("Runtime download needs your approval.");
     if (
@@ -255,6 +259,8 @@ export function activate(ctx: PluginBackendContext) {
           : item.error,
       enabled: settings().enabled,
       installed: runtime.runtimeInstalled(),
+      repairRequired: runtime.runtimeRepairRequired(),
+      runtimeUnsafe: runtime.runtimeUnsafe(),
       speechInstalled: runtime.pocketInstalled(),
       narration: canNarrate(item.plan) && settings().narration,
       speechDownloadMiB: POCKET_MIB,
@@ -263,16 +269,34 @@ export function activate(ctx: PluginBackendContext) {
         : null,
     };
   });
-  ctx.handle("start", (input) => {
+  ctx.handle("start", async (input) => {
     const x = input as {
       id?: unknown;
       downloadRuntime?: unknown;
       downloadSpeech?: unknown;
     };
+    if (runtime.runtimeInstalled()) {
+      await runtime.check(ctx.signal);
+      if (runtime.runtimeRepairRequired())
+        throw new Error("The pinned Raea runtime is damaged; use the explicit Repair Raea runtime action.");
+    }
     start(x?.id, {
       runtime: x?.downloadRuntime === true,
       speech: x?.downloadSpeech === true,
     });
+    return { ok: true };
+  });
+  ctx.handle("repair-runtime", async (input) => {
+    assertActive();
+    if ((input as { confirmed?: unknown })?.confirmed !== true)
+      throw new Error("Runtime repair requires explicit confirmation.");
+    if (runtime.runtimeUnsafe())
+      throw new Error("Raea runtime path is unsafe (symlink or non-directory); resolve it manually before repair.");
+    if (!runtime.runtimeRepairRequired())
+      throw new Error("The Raea runtime does not need repair.");
+    if (running) throw new Error("Wait for the active video render to finish before repairing Raea.");
+    await runtime.repair(ctx.signal);
+    ctx.events.emit("runtime-changed", {});
     return { ok: true };
   });
   ctx.handle("cancel", (input) => {

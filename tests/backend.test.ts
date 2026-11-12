@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PluginBackendContext } from "../sdk/index.ts";
@@ -114,14 +114,14 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
     const id = result.details.id;
     const mathRecord = path.join(directory, "videos", id + ".json");
     const mathFile = path.join(directory, "videos", id + ".mp4");
-    assert.deepEqual(call("status", { id }).transcript, quadratic.beats.map((beat) => beat.narration));
+    assert.deepEqual((await call("status", { id })).transcript, quadratic.beats.map((beat) => beat.narration));
     const completed = JSON.parse(readFileSync(mathRecord, "utf8"));
     writeFileSync(mathRecord, JSON.stringify({ ...completed, status: "done" }));
     writeFileSync(mathFile, "test video");
     truncateSync(mathFile, 25_000_001);
     assert.equal(call("chunk", { id, offset: 0 }).size, 25_000_001);
     truncateSync(mathFile, 50_000_001);
-    assert.equal(call("status", { id }).status, "error");
+    assert.equal((await call("status", { id })).status, "error");
 
     call("save-settings", { key: "enabled", value: false });
     assert.equal(factory({ chatId: "chat-one", agent: "teacher" }).length, 0);
@@ -129,20 +129,27 @@ test("tool admission, settings, saved videos, and bounded media", async () => {
     call("save-settings", { key: "enabled", value: true });
     assert.ok(instructions.has("prober"));
     call("save-settings", { key: "enabled", value: false });
-    assert.throws(
+    await assert.rejects(
       () => call("start", { id: a.details.id, download: true }),
       /disabled/,
+    );
+    call("save-settings", { key: "enabled", value: true });
+    mkdirSync(path.join(directory, "runtime", "v0.1.1-rc2"), { recursive: true });
+    assert.equal((await call("status", { id: a.details.id })).repairRequired, true);
+    await assert.rejects(
+      () => call("start", { id: a.details.id, downloadRuntime: true }),
+      /explicit Repair Raea runtime action/,
     );
     const recordPath = path.join(directory, "videos", a.details.id + ".json");
     const record = JSON.parse(readFileSync(recordPath, "utf8"));
     record.status = "done";
     writeFileSync(recordPath, JSON.stringify(record));
-    assert.equal(call("status", { id: record.id }).status, "error");
+    assert.equal((await call("status", { id: record.id })).status, "error");
     writeFileSync(
       path.join(directory, "videos", record.id + ".mp4"),
       Buffer.from("test video"),
     );
-    assert.equal(call("status", { id: record.id }).status, "done");
+    assert.equal((await call("status", { id: record.id })).status, "done");
     assert.equal(
       Buffer.from(
         call("chunk", { id: record.id, offset: 0 }).data,

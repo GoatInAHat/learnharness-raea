@@ -19,6 +19,8 @@ type Status = {
   transcript: string[];
   enabled: boolean;
   installed: boolean;
+  repairRequired: boolean;
+  runtimeUnsafe: boolean;
   speechInstalled: boolean;
   speechDownloadMiB: number;
   narration: boolean;
@@ -168,6 +170,35 @@ export async function activate(ctx: PluginFrontendContext) {
       };
       const settingsButton = () =>
         button("Video settings", () => ctx.app.openSettings());
+      const confirmRepair = () => {
+        let dialog: ReturnType<typeof ctx.ui.openDialog> | undefined;
+        dialog = ctx.ui.openDialog({
+          title: "Repair Raea runtime",
+          content: (host, signal) => {
+            const message = document.createElement("p");
+            message.textContent = "Replace the damaged pinned Raea runtime files? Saved videos, settings, and voice models will be kept.";
+            host.append(message);
+            const slot = document.createElement("span");
+            host.append(slot);
+            const confirm = ctx.ui.mountButton(slot, {
+              label: "Repair runtime",
+              variant: "destructive",
+              onClick: async () => {
+                confirm.update({ disabled: true });
+                try {
+                  await ctx.call("repair-runtime", { confirmed: true });
+                  dialog?.dispose();
+                  safeRefresh();
+                } catch (error) {
+                  if (!signal.aborted) message.textContent = error instanceof Error ? error.message : String(error);
+                  confirm.update({ disabled: false });
+                }
+              },
+            }, { signal });
+            return () => confirm.dispose();
+          },
+        }, { signal: tool.signal });
+      };
       async function loadVideo() {
         if (loading) return loading;
         loading = loadVideoOnce();
@@ -242,6 +273,8 @@ export async function activate(ctx: PluginFrontendContext) {
         if (disposed || tool.signal.aborted || current !== sequence) return;
         clearButtons();
         settingsButton();
+        if (item.repairRequired && !item.runtimeUnsafe)
+          button("Repair Raea runtime…", confirmRepair);
         status.textContent =
           item.status === "running"
             ? item.activity || "Rendering video…"
@@ -254,7 +287,11 @@ export async function activate(ctx: PluginFrontendContext) {
           button("Cancel", async () => {
             await ctx.call("cancel", { id });
           });
-        else if (!item.enabled)
+        else if (item.runtimeUnsafe) {
+          status.textContent = "Raea runtime path is unsafe (symlink or non-directory); resolve it manually before rendering.";
+        } else if (item.repairRequired) {
+          status.textContent = "The pinned Raea runtime is incomplete or damaged. Repair replaces runtime files and keeps saved videos and settings.";
+        } else if (!item.enabled)
           status.textContent =
             "New explainer videos are disabled in plugin settings.";
         else if (!item.platform)
