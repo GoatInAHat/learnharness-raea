@@ -40,17 +40,59 @@ export function createRuntime(root: string, localArchive?: string) {
     "bin",
     process.platform === "win32" ? "raea.exe" : "raea",
   );
+  // This known executable came from the pinned Mac archive. It lets existing
+  // Mac installs migrate without another download; other legacy installs must
+  // be verified through the official archive once before being used again.
+  const legacy = process.platform === "darwin" && process.arch === "arm64" ? {
+    size: 706524048,
+    sha: "23a706c1c04d6fa8f896f7645a6990011ff1a1186a6b642bef5663aed82917db",
+  } : undefined;
+  const markerName = "verified-runtime.json";
+  let verified: { key: string; ok: boolean } | undefined;
   let modelInvalid = false;
   const pocketReady = () => !modelInvalid && pocketInstalled(root);
-  const runtimeInstalled = () => {
+  const runtimeStamp = () => {
+    if (!asset) return;
     try {
-      return (
-        fs.lstatSync(binary).isFile() && !fs.lstatSync(runtime).isSymbolicLink()
-      );
-    } catch {
-      return false;
-    }
+      if (![runtime, path.join(runtime, "raea"), path.dirname(binary)].every(dir => fs.lstatSync(dir).isDirectory())) return;
+      const binaryStat = fs.lstatSync(binary);
+      if (!binaryStat.isFile()) return;
+      const marker = path.join(runtime, markerName);
+      const stat = fs.lstatSync(marker, { throwIfNoEntry: false });
+      let expected = legacy;
+      if (stat) {
+        if (!stat.isFile() || stat.size > 512) return;
+        const data = JSON.parse(fs.readFileSync(marker, "utf8"));
+        if (data?.archive !== asset.sha256 || !Number.isSafeInteger(data.size) || !/^[a-f0-9]{64}$/.test(data.sha)) return;
+        expected = { size: data.size, sha: data.sha };
+      }
+      if (!expected || expected.size !== binaryStat.size) return;
+      return { sha: expected.sha,
+        key: [binaryStat.dev, binaryStat.ino, binaryStat.size, binaryStat.mtimeMs, binaryStat.ctimeMs, expected.sha].join(":") };
+    } catch { return; }
   };
+  const runtimeInstalled = () => {
+    const stamp = runtimeStamp();
+    return !!stamp && !(verified?.key === stamp.key && !verified.ok);
+  };
+  async function binaryDigest(file: string, signal: AbortSignal) {
+    const handle = await fsp.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size <= 0) throw new Error("Invalid runtime executable.");
+      const hash = createHash("sha256");
+      for await (const chunk of handle.createReadStream({ signal, autoClose: false })) hash.update(chunk);
+      return { size: stat.size, sha: hash.digest("hex") };
+    } finally { await handle.close(); }
+  }
+  async function verifyRuntime(signal: AbortSignal) {
+    const stamp = runtimeStamp();
+    if (!stamp) return false;
+    if (verified?.key === stamp.key) return verified.ok;
+    const ok = (await binaryDigest(binary, signal)).sha === stamp.sha && runtimeStamp()?.key === stamp.key;
+    verified = { key: stamp.key, ok };
+    return ok;
+  }
   function run(
     command: string,
     args: string[],
@@ -93,7 +135,7 @@ export function createRuntime(root: string, localArchive?: string) {
     });
   }
   async function install(signal: AbortSignal): Promise<void> {
-    if (runtimeInstalled()) return;
+    if (runtimeInstalled() && await verifyRuntime(signal)) return;
     if (!asset)
       throw new Error("Video rendering is not available on this platform.");
     await fsp.mkdir(path.dirname(runtime), { recursive: true });
@@ -168,19 +210,26 @@ export function createRuntime(root: string, localArchive?: string) {
         env,
       );
       await fsp.rm(archive);
-      await fsp.access(
-        path.join(
-          stage,
-          "raea",
-          "bin",
-          process.platform === "win32" ? "raea.exe" : "raea",
-        ),
-      );
+      const staged = await binaryDigest(path.join(stage, "raea", "bin", path.basename(binary)), signal);
+      await fsp.writeFile(path.join(stage, markerName), JSON.stringify({ archive: asset.sha256, ...staged }),
+        { flag: "wx", mode: 0o600 });
       signal.throwIfAborted();
+      const backup = await fsp.mkdtemp(path.join(path.dirname(runtime), ".repair-"));
+      const previous = path.join(backup, "previous");
+      let preserveBackup = false;
       try {
-        fs.renameSync(stage, runtime);
-      } catch (error) {
-        if (!runtimeInstalled()) throw error;
+        if (fs.lstatSync(runtime, { throwIfNoEntry: false })) fs.renameSync(runtime, previous);
+        try { fs.renameSync(stage, runtime); }
+        catch (error) {
+          if (fs.lstatSync(previous, { throwIfNoEntry: false })) {
+            try { fs.renameSync(previous, runtime); }
+            catch { preserveBackup = true; throw new Error("Runtime repair failed; the previous runtime was preserved in its repair backup."); }
+          }
+          throw error;
+        }
+        verified = undefined;
+      } finally {
+        if (!preserveBackup) await fsp.rm(backup, { recursive: true, force: true });
       }
     } finally {
       await fsp.rm(stage, { recursive: true, force: true });
@@ -282,9 +331,10 @@ registerRoot(()=> <Composition id="lesson" component={Scene} width={896} height=
     const narrated = canNarrate(plan) && (options.narration || !!options.wav);
     const pocket = narrated && !options.wav;
     const maxBytes = videoByteLimit(plan);
-    if (!runtimeInstalled() && !consent.runtime)
+    const verifiedRuntime = runtimeInstalled() && await verifyRuntime(signal);
+    if (!verifiedRuntime && !consent.runtime)
       throw new Error("Runtime download needs your approval.");
-    if (!runtimeInstalled()) {
+    if (!verifiedRuntime) {
       options.progress?.(localArchive ? "Verifying Raea runtime…" : "Downloading Raea runtime…");
       await install(signal);
     }

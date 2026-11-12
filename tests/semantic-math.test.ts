@@ -7,6 +7,21 @@ import { evaluate, narrationWindow, parseSemanticPlan, semanticFrame, semanticSc
 import { semanticComposition } from "../src/semantic-render.ts";
 import { fixtureWav, joined, quadratic, x } from "./semantic-fixtures.ts";
 
+test("comparison drops both tangent readouts at a coincident transition frame", () => {
+  const plan = structuredClone(quadratic);
+  const camera = { x: 0, y: 1, width: 6, height: 6 };
+  Object.assign(plan.beats[4], { display: "compare", reference: 0, camera });
+  Object.assign(plan.beats[5], { display: "tangent", a: -1, camera });
+  delete plan.beats[5].reference;
+  assert(validSemanticPlan(plan));
+  assert.equal(semanticFrame(plan, 2219).display, "compare");
+  const exact = semanticFrame(plan, 2220);
+  assert.equal(exact.p.x, 0);
+  assert.equal(exact.display, "points");
+  assert.equal(exact.reference, undefined);
+  assert.equal(semanticFrame(plan, 2221).display, "compare");
+});
+
 test("v3 shares bounded geometry across camera motion and exact tangent states", () => {
   assert.ok(validSemanticPlan(quadratic));
   assert.ok(Value.Check(semanticSchema, quadratic));

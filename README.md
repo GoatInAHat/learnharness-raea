@@ -2,7 +2,7 @@
 
 Create narrated, captioned mathematical animations directly in a LearnHarness lesson. The teacher uses your existing configured model; Raea renders the visual locally. Videos appear in the conversation with playback controls and a text transcript.
 
-This branch previews 0.3.0, including longer graph explainers and narration during purposeful motion. The stable download below is 0.2.0. Build the preview from source with the commands under Develop.
+This branch previews 0.3, including longer graph explainers and narration during purposeful motion. The stable download below is 0.2.0. Build the preview from source with the commands under Develop.
 
 ## See it in action
 
@@ -28,7 +28,7 @@ Linux requires a compatible glibc (2.39 or newer), Vulkan graphics, ALSA and fon
 
 Open **Settings → Community plugins → Raea Explainer** or use **Video settings** on a video card. **Allow new explainer videos** defaults on; turning it off blocks new plans and renders while existing videos remain playable. Choose a maximum length of 10, 15, 25, 45, 60, 90 or 120 seconds for new plans (60 seconds by default for new installations), a dark or light theme, whether to narrate, and the Alba or Marius voice. Existing preferences remain in place after updates. Videos have captions and a transcript; there is no background music.
 
-Disabling the entire community plugin hides its video renderer until it is enabled again. This does not delete the plugin’s saved plans, videos or runtime. To update, replace only `raea-explainer/dist/`, preserve sibling `data/`, and restart LearnHarness. Raea runs as a separate executable, not as model-generated code; the teacher supplies bounded declarative scene data.
+Disabling the entire community plugin hides its video renderer until it is enabled again. This does not delete the plugin’s saved plans, videos or runtime. To update, extract the new ZIP separately, back up the old `raea-explainer/dist/`, swap in the extracted `dist/`, and restart LearnHarness. Keep sibling `data/`. Raea runs as a separate executable; the teacher supplies bounded declarative scene data. If the local renderer is damaged or an older Linux/Windows installation has no verification record, the video card offers a verified runtime download.
 
 ## Develop
 

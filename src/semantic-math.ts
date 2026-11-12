@@ -279,6 +279,10 @@ export function semanticFrame(plan: SemanticPlan, frame: number) {
     display = compatible(previous.display, h) ? previous.display : "points";
     reference = display === "compare" ? previous.reference : undefined;
   }
+  if (display === "compare" && reference === a) {
+    display = "points";
+    reference = undefined;
+  }
   const line = lineAt(plan.graph, a, h);
   const other = reference === undefined ? undefined : lineAt(plan.graph, reference, 0);
   return {
