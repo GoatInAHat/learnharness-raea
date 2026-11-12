@@ -21,6 +21,7 @@ type Status = {
   installed: boolean;
   repairRequired: boolean;
   runtimeUnsafe: boolean;
+  repairing: boolean;
   speechInstalled: boolean;
   speechDownloadMiB: number;
   narration: boolean;
@@ -159,7 +160,6 @@ export async function activate(ctx: PluginFrontendContext) {
                 if (!disposed)
                   status.textContent =
                     error instanceof Error ? error.message : String(error);
-                safeRefresh();
               } finally {
                 if (!disposed) handle.update({ disabled: false });
               }
@@ -275,7 +275,7 @@ export async function activate(ctx: PluginFrontendContext) {
         clearButtons();
         settingsButton();
         const failedRenderer = item.status === "error" && item.error?.startsWith("Renderer failed (");
-        if ((item.repairRequired || failedRenderer) && !item.runtimeUnsafe && item.platform)
+        if ((item.repairRequired || failedRenderer) && !item.runtimeUnsafe && !item.repairing && item.platform)
           button("Repair Raea runtime…", () => confirmRepair(item.platform!));
         status.textContent =
           item.status === "running"
@@ -289,6 +289,8 @@ export async function activate(ctx: PluginFrontendContext) {
           button("Cancel", async () => {
             await ctx.call("cancel", { id });
           });
+        else if (item.repairing)
+          status.textContent = "Raea runtime repair is in progress. Rendering is paused.";
         else if (item.runtimeUnsafe) {
           status.textContent = "Raea runtime path is unsafe (symlink or non-directory); resolve it manually before rendering.";
         } else if (item.repairRequired) {
@@ -315,12 +317,17 @@ export async function activate(ctx: PluginFrontendContext) {
                   ? `Download local voice model (${item.speechDownloadMiB} MiB) and render`
                   : "Render video",
             async () => {
-              await ctx.call("start", {
-                id,
-                downloadRuntime: !item.installed,
-                downloadSpeech: item.narration && !item.speechInstalled,
-              });
-              await refresh();
+              try {
+                await ctx.call("start", {
+                  id,
+                  downloadRuntime: !item.installed,
+                  downloadSpeech: item.narration && !item.speechInstalled,
+                });
+                await refresh();
+              } catch (error) {
+                await refresh();
+                throw error;
+              }
             },
           );
         if (!content.querySelector("details")) {

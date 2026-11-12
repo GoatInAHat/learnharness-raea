@@ -267,6 +267,7 @@ export function activate(
       installed: runtime.runtimeInstalled(),
       repairRequired: runtime.runtimeRepairRequired(),
       runtimeUnsafe: runtime.runtimeUnsafe(),
+    repairing: !!repairing,
       speechInstalled: runtime.pocketInstalled(),
       narration: canNarrate(item.plan) && settings().narration,
       speechDownloadMiB: POCKET_MIB,
@@ -305,12 +306,15 @@ export function activate(
     if (!repairing) {
       const operation = runtime.repair(ctx.signal);
       repairing = operation;
+      ctx.events.emit("runtime-changed", { repairing: true });
       void operation.finally(() => {
-        if (repairing === operation) repairing = undefined;
+        if (repairing === operation) {
+          repairing = undefined;
+          ctx.events.emit("runtime-changed", { repairing: false });
+        }
       }).catch(() => {});
     }
     await repairing;
-    ctx.events.emit("runtime-changed", {});
     return { ok: true };
   });
   ctx.handle("cancel", (input) => {
@@ -391,7 +395,8 @@ export function activate(
     if (
       runtime.runtimeInstalled() &&
       (!pref.narration || runtime.pocketInstalled()) &&
-      !running
+      !running &&
+      !repairing
     )
       start(id, { runtime: false, speech: false });
     return {
@@ -466,6 +471,6 @@ export function activate(
   return async () => {
     const active = running;
     active?.controller.abort();
-    await active?.finished;
+    await Promise.all([active?.finished, repairing?.catch(() => {})]);
   };
 }
