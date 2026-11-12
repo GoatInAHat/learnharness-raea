@@ -47,11 +47,77 @@ test("joined logistic curve evaluates and differentiates analytically on both br
   assert.equal(evaluate(expr, 2)[0], 8);
   assert.ok(Math.abs(evaluate(expr, 0)[1] - expected) < 1e-13);
   assert.ok(Math.abs(evaluate(expr, -1e-8)[1] - expected) < 1e-7);
+  const tangentPlan = structuredClone(joined);
+  const tangent = tangentPlan.beats[4];
+  tangent.a = 0;
+  const exact = semanticFrame(tangentPlan, tangent.settleFrame);
+  assert.equal(exact.kind, "tangent");
+  assert.deepEqual(exact.p, exact.q);
+  for (const h of [-1e-13, 1e-13]) {
+    Object.assign(tangent, { h, display: "secant" });
+    const secant = semanticFrame(tangentPlan, tangent.settleFrame);
+    assert.equal(secant.kind, "secant");
+    assert.equal(secant.q.x, h);
+    assert.ok(Math.abs(secant.slope - expected) < 1e-12);
+  }
   const negative = structuredClone(joined);
   for (const beat of negative.beats) beat.h = -beat.h;
   assert.ok(validSemanticPlan(negative));
   assert.equal(semanticFrame(negative, 1350).kind, "secant");
   assert.ok(semanticFrame(negative, 1350).q.x < semanticFrame(negative, 1350).p.x);
+});
+
+test("piecewise joins reject a representable jump or kink before producing a tangent", () => {
+  for (const after of [
+    { op: "add", left: x, right: { op: "constant", value: 1e-9 } },
+    { op: "multiply", left: x, right: { op: "constant", value: 1.000000001 } },
+  ] as const) {
+    const plan = structuredClone(joined);
+    plan.graph.expression = { op: "piecewise", at: 0, before: x, after };
+    const tangent = plan.beats[4];
+    tangent.a = 0;
+    assert.equal(validSemanticPlan(plan), false);
+    assert.throws(() => semanticFrame(plan, tangent.settleFrame), /must match/);
+  }
+});
+
+test("smooth endpoints are exact and the tails stay analytic", () => {
+  const smooth = { op: "smooth", input: x, steepness: 10 } as const;
+  const [lo, dlo] = evaluate(smooth, 0);
+  const [hi, dhi] = evaluate(smooth, 1);
+  assert.equal(lo, 0);
+  assert.equal(hi, 1);
+  assert.equal(dlo, dhi);
+  const [below, dbelow] = evaluate(smooth, -0.2);
+  const [above, dabove] = evaluate(smooth, 1.2);
+  assert.ok(below < 0 && above > 1 && dbelow > 0 && dabove > 0);
+  const plan = structuredClone(joined);
+  assert.equal(validSemanticPlan({
+    ...plan, graph: { ...plan.graph, expression: { op: "clamp", input: x, min: 0, max: 1 } },
+  }), false);
+});
+
+test("frame geometry admits the closed domain and rejects off-domain points", () => {
+  const plan = structuredClone(quadratic);
+  const beat = plan.beats[0];
+  Object.assign(beat, { a: -2, h: 6, camera: { x: 1, y: 5, width: 8, height: 24 } });
+  assert.ok(validSemanticPlan(plan));
+  const edge = semanticFrame(plan, 0);
+  assert.equal(edge.p.x, -2);
+  assert.equal(edge.q.x, 4);
+  for (const [a, h] of [[-2.01, 1], [-2, -0.01], [1, 3.01]]) {
+    Object.assign(beat, { a, h });
+    assert.equal(validSemanticPlan(plan), false);
+    assert.throws(() => semanticFrame(plan, 0), /within the graph domain/);
+  }
+  plan.graph.domain = [-2, 0.11];
+  plan.graph.expression = x;
+  for (const keyframe of plan.beats) Object.assign(keyframe, {
+    a: 0.1, h: keyframe.h === 0 ? 0 : 0.01,
+    camera: { x: 0, y: 0, width: 4, height: 4 },
+  });
+  assert.ok(validSemanticPlan(plan));
+  assert.equal(semanticFrame(plan, plan.beats[1].startFrame + 2).q.x, 0.11);
 });
 
 test("a small rise retains its secant slope across a large offset", () => {

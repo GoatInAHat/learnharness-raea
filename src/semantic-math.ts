@@ -82,15 +82,27 @@ function boundedExpression(value: unknown): boolean {
   return visit(value, 1);
 }
 
-const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
+function sigmoid(x: number) {
+  const e = Math.exp(-Math.abs(x));
+  return (x < 0 ? e : 1) / (1 + e);
+}
 
 /** Evaluate the curve and its first derivative together by the chain rule. */
 export function evaluate(expression: Expression, x: number): [number, number] {
   switch (expression.op) {
     case "constant": return [expression.value, 0];
     case "x": return [x, 1];
-    case "piecewise":
-      return evaluate(x < expression.at ? expression.before : expression.after, x);
+    case "piecewise": {
+      const { at, before, after } = expression;
+      if (x < at) return evaluate(before, x);
+      const right = evaluate(after, x);
+      if (x === at) {
+        const left = evaluate(before, x);
+        if (!right.every((value, i) => Number.isFinite(value) && value === left[i]))
+          throw new Error("Piecewise value and first derivative must match at the breakpoint");
+      }
+      return right;
+    }
     case "power": {
       const [value, derivative] = evaluate(expression.base, x);
       const { exponent } = expression;
@@ -101,9 +113,10 @@ export function evaluate(expression: Expression, x: number): [number, number] {
       const k = expression.steepness;
       const offset = sigmoid(-k / 2);
       const z = k * (value - 0.5);
-      const logistic = sigmoid(z);
       const scale = 1 - 2 * offset;
-      return [(logistic - offset) / scale, k * logistic * sigmoid(-z) * derivative / scale];
+      const tail = sigmoid(-Math.abs(z));
+      const normalized = value === 0 ? 0 : value === 1 ? 1 : (sigmoid(z) - offset) / scale;
+      return [normalized, k * (tail * (1 - tail)) * derivative / scale];
     }
     default: {
       const [left, dl] = evaluate(expression.left, x);
@@ -147,12 +160,12 @@ function smallRise(expression: Expression, a: number, h: number): number {
       return difference / (1 - 2 * sigmoid(-k / 2));
     }
     case "piecewise": {
-      if (h < 0) return -smallRise(expression, b, -h);
       const { at, before, after } = expression;
-      if (b < at) return smallRise(before, a, h);
-      if (a >= at) return smallRise(after, a, h);
-      const jump = evaluate(after, at)[0] - evaluate(before, at)[0];
-      return smallRise(before, a, at - a) + jump + smallRise(after, at, b - at);
+      const [first, second] = a < at ? [before, after] : [after, before];
+      const toJoin = at - a;
+      if (a < at ? h <= toJoin : h >= toJoin) return smallRise(first, a, h);
+      // Preserve the signed run when a + h has rounded near the join.
+      return smallRise(first, a, toJoin) + smallRise(second, at, h - toJoin);
     }
   }
 }
@@ -172,19 +185,22 @@ export function narrationWindow(plan: SemanticPlan, index: number) {
 }
 
 type Point = { x: number; y: number };
-function lineAt(expression: Expression, a: number, h: number) {
+function lineAt({ domain: [lo, hi], expression }: SemanticPlan["graph"], a: number, h: number) {
+  const b = a + h;
+  if (!(lo <= a && a <= hi && lo <= b && b <= hi))
+    throw new Error("Points must be within the graph domain");
   const [p, derivative] = evaluate(expression, a);
-  const [q, dq] = h === 0 ? [p, derivative] : evaluate(expression, a + h);
+  const [q, dq] = h === 0 ? [p, derivative] : evaluate(expression, b);
   const difference = q - p;
   const rise = h !== 0 && Math.abs(difference) < 1e-8 * Math.max(1, Math.abs(p), Math.abs(q))
     ? smallRise(expression, a, h)
     : difference;
   const slope = h === 0 ? derivative : rise / h;
-  if ((h !== 0 && a + h === a) || ![p, q, derivative, dq, slope].every(magnitude))
+  if ((h !== 0 && b === a) || ![p, q, derivative, dq, slope].every(magnitude))
     throw new Error("Graph geometry exceeds the supported range");
   return {
     p: { x: a, y: p },
-    q: { x: a + h, y: q },
+    q: { x: b, y: q },
     h,
     rise,
     slope,
@@ -198,18 +214,12 @@ export function validSemanticPlan(value: unknown): value is SemanticPlan {
   const plan = value as SemanticPlan;
   const { domain: [lo, hi], expression, xLabel, yLabel, slopeUnit } = plan.graph;
   if (!(lo < hi) || ![plan.title, xLabel, yLabel, slopeUnit ?? "unit"].every(plain)) return false;
-  if (expression.op === "piecewise") {
-    const { at, before, after } = expression;
-    if (!(lo < at && at < hi)) return false;
-    const a = evaluate(before, at), b = evaluate(after, at);
-    if (!a.every((x, i) => magnitude(x) && magnitude(b[i]) &&
-      Math.abs(x - b[i]) <= 1e-8 * Math.max(1, Math.abs(x), Math.abs(b[i])))) return false;
-  }
-  const inDomain = (x: number) => lo <= x && x <= hi;
   const contains = (c: Camera, p: Point) =>
     Math.abs(p.x - c.x) <= c.width / 2 + 1e-10 &&
     Math.abs(p.y - c.y) <= c.height / 2 + 1e-10;
   try {
+    if (expression.op === "piecewise" &&
+      (!(lo < expression.at && expression.at < hi) || !evaluate(expression, expression.at).every(magnitude))) return false;
     for (const [i, beat] of plan.beats.entries()) {
       const { startFrame, settleFrame, cueFrame, a, h, display, camera, reference, narration, caption } = beat;
       const previous = plan.beats[i - 1];
@@ -225,14 +235,13 @@ export function validSemanticPlan(value: unknown): value is SemanticPlan {
           : cueFrame < settleFrame + 12) ||
         cueFrame >= narrationWindow(plan, i).speechEndFrame ||
         !plain(narration) || (caption !== undefined && !plain(caption)) ||
-        !inDomain(a) || !inDomain(a + h) ||
         (h !== 0 && Math.abs(h) < 0.0001) || (previous && h * previous.h < 0) ||
         !compatible(display, h) || (display === "compare") !== (reference !== undefined)
       ) return false;
-      const { p, q } = lineAt(expression, a, h);
+      const { p, q } = lineAt(plan.graph, a, h);
       if (!contains(camera, p) || !contains(camera, q)) return false;
-      if (reference !== undefined && (!inDomain(reference) || reference === a ||
-        !contains(camera, lineAt(expression, reference, 0).p))) return false;
+      if (reference !== undefined && (reference === a ||
+        !contains(camera, lineAt(plan.graph, reference, 0).p))) return false;
       for (let frame = startFrame; frame < settleFrame; frame++) semanticFrame(plan, frame);
     }
     for (let i = 0; i <= 256; i++) {
@@ -244,7 +253,7 @@ export function validSemanticPlan(value: unknown): value is SemanticPlan {
   }
 }
 
-const lerp = (a: number, b: number, t: number) => a * (1 - t) + b * t;
+const lerp = (a: number, b: number, t: number) => a === b ? a : a * (1 - t) + b * t;
 const scale = (a: number, b: number, t: number) => Math.exp(lerp(Math.log(a), Math.log(b), t));
 
 /** Frame-local semantics, shared by the graph and the audio/visual scheduler. */
@@ -270,8 +279,8 @@ export function semanticFrame(plan: SemanticPlan, frame: number) {
     display = compatible(previous.display, h) ? previous.display : "points";
     reference = display === "compare" ? previous.reference : undefined;
   }
-  const line = lineAt(plan.graph.expression, a, h);
-  const other = reference === undefined ? undefined : lineAt(plan.graph.expression, reference, 0);
+  const line = lineAt(plan.graph, a, h);
+  const other = reference === undefined ? undefined : lineAt(plan.graph, reference, 0);
   return {
     frame, index, display, camera, cueFrame: beat.cueFrame,
     narrationScope: beat.narrationScope ?? "settled",
